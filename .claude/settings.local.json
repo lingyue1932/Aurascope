@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile canvas.py)",
+      "Bash(python -m py_compile main_window.py)",
+      "Bash(python -m py_compile styles.py)"
+    ]
+  }
+}
