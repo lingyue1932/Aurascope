@@ -13,7 +13,8 @@ from PyQt6.QtGui import QColor
 from image import detect_objects, otsu_threshold
 from ui_components import (create_primary_button, create_secondary_button,
                            create_danger_button, create_step_title,
-                           create_checkbox, create_slider_with_label)
+                           create_checkbox, create_slider_with_label,
+                           create_count_result)
 from counting_canvas import CountingCanvas
 
 
@@ -176,9 +177,7 @@ class CountingTab(QWidget):
         self.btn_defaults = create_danger_button("恢复默认设置", self._restore_defaults)
         layout.addWidget(self.btn_defaults)
 
-        self.lbl_count = QLabel("数量: 0")
-        self.lbl_count.setStyleSheet("color: #1e293b; font-weight: bold; font-size: 18px;")
-        self.lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_count = create_count_result("数量: 0")
         layout.addWidget(self.lbl_count)
 
         self.btn_export = create_secondary_button("导出 CSV", self.export_csv)

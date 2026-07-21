@@ -7,7 +7,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QDoubleValidator
 
 from ui_components import (create_primary_button, create_secondary_button,
-                           create_step_title)
+                           create_step_title, create_card_title,
+                           create_card_subtitle, create_stat_value,
+                           create_warning_box, create_info_label)
 
 
 MM2_PER_IN2 = 645.16
@@ -52,11 +54,9 @@ class ShearTab(QWidget):
         v.setSpacing(16)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        title = QLabel("Die Shear Force Calculator")
-        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1e293b;")
+        title = create_card_title("Die Shear Force Calculator")
         v.addWidget(title)
-        sub = QLabel("参考 MIL-STD-883H Method 2019.9 规范 (Figure 2019-4)")
-        sub.setStyleSheet("color: #64748b; font-size: 14px; margin-bottom: 4px;")
+        sub = create_card_subtitle("参考 MIL-STD-883H Method 2019.9 规范 (Figure 2019-4)")
         v.addWidget(sub)
 
         v.addWidget(create_step_title("芯片尺寸"))
@@ -78,15 +78,13 @@ class ShearTab(QWidget):
         self.lbl_area_mm2 = QLabel("0.0000 平方毫米")
         self.lbl_area_in2 = QLabel("0.0000 平方英寸")
         for lb in [self.lbl_area_mm2, self.lbl_area_in2]:
-            lb.setStyleSheet("font-size: 18px; font-weight: 700; color: #1e293b;")
+            lb.setObjectName("AreaValue")
         area_lo = QHBoxLayout()
         area_lo.addWidget(self.lbl_area_mm2, 1)
         area_lo.addWidget(self.lbl_area_in2, 1)
         v.addLayout(area_lo)
 
-        self.area_warn = QLabel("")
-        self.area_warn.setStyleSheet("color: #dc2626; font-size: 12px; font-weight: 600; padding: 6px 10px; background: #fef2f2; border-radius: 6px;")
-        self.area_warn.setWordWrap(True)
+        self.area_warn = create_warning_box("")
         self.area_warn.setVisible(False)
         v.addWidget(self.area_warn)
 
@@ -94,16 +92,17 @@ class ShearTab(QWidget):
         self.result_widgets = {}
         for label, mult, color in [("1X 最小力值", 1.0, "#2563eb"), ("1.25X 测试力值", 1.25, "#f59e0b"), ("2X 测试力值", 2.0, "#dc2626")]:
             f = QFrame()
-            f.setStyleSheet(f"background: #f8fafc; border-radius: 8px; padding: 4px;")
+            f.setObjectName("ResultCard")
             f_lo = QVBoxLayout(f)
             f_lo.setContentsMargins(12, 8, 12, 8)
             f_lo.setSpacing(4)
 
             hdr = QHBoxLayout()
             lbl = QLabel(label)
-            lbl.setStyleSheet("color: #64748b; font-size: 13px;")
+            lbl.setObjectName("StatValue")
             badge = QLabel(f"x{mult}")
-            badge.setStyleSheet(f"color: {color}; font-weight: 700; font-size: 11px; background: {color}15; padding: 1px 8px; border-radius: 4px;")
+            badge.setObjectName("ForceBadge")
+            badge.setStyleSheet(f"color: {color}; background: {color}15;")
             hdr.addWidget(lbl)
             hdr.addStretch()
             hdr.addWidget(badge)
@@ -113,7 +112,7 @@ class ShearTab(QWidget):
             g_lb = QLabel("0.0 g")
             n_lb = QLabel("0.0000 N")
             for lb in [g_lb, n_lb]:
-                lb.setStyleSheet("font-size: 15px; font-weight: 600; color: #1e293b;")
+                lb.setObjectName("ForceValue")
             val_lo.addWidget(g_lb, 1)
             val_lo.addWidget(n_lb, 1)
             f_lo.addLayout(val_lo)
@@ -128,8 +127,7 @@ class ShearTab(QWidget):
         copy_lo.addWidget(self.btn_copy)
         v.addLayout(copy_lo)
 
-        self.prompt = QLabel("请输入芯片尺寸后自动计算")
-        self.prompt.setStyleSheet("color: #94a3b8; font-size: 13px; padding: 8px 0;")
+        self.prompt = create_info_label("请输入芯片尺寸后自动计算")
         v.addWidget(self.prompt)
 
         v.addStretch()
@@ -144,13 +142,6 @@ class ShearTab(QWidget):
         inp = QLineEdit()
         inp.setPlaceholderText(placeholder)
         inp.setValidator(QDoubleValidator(0.0, 99999.0, 3))
-        inp.setStyleSheet("""
-            QLineEdit {
-                border: 1.5px solid #cbd5e0; border-radius: 8px; padding: 8px 12px;
-                font-size: 14px; background: white;
-            }
-            QLineEdit:focus { border-color: #4299e1; }
-        """)
         inp.textChanged.connect(self.calculate)
         return inp
 
@@ -177,31 +168,26 @@ class ShearTab(QWidget):
 
         v.addWidget(create_step_title("标准说明"))
         info = [
-            ("参考标准：MIL-STD-883H Method 2019.9 (Figure 2019-4)", "#1e293b", True),
-            ("", "#64748b", False),
-            ("适用范围：预制金锡 (Preform/Pre-coated) 芯片剪切力计算", "#dc2626", True),
-            ("", "#64748b", False),
-            ("面积范围限制", "#1e293b", True),
-            ("  - 面积 < 5x10⁻⁴ in²: 力值按比例计算", "#64748b", False),
-            ("  - 5x10⁻⁴ ~ 64x10⁻⁴ in²: 线性插值区域", "#64748b", False),
-            ("  - 面积 > 64x10⁻⁴ in²: 标准要求 min 2.5 kgf (此计算器暂不适用)", "#64748b", False),
-            ("", "#64748b", False),
-            ("计算公式", "#1e293b", True),
-            ("  1. 面积(mm²) = 长度 x 宽度", "#64748b", False),
-            ("  2. 面积(in²) = 面积(mm²) / 645.16", "#64748b", False),
-            ("  3. 1X 力值(g) = 面积(in²) x 400 x 1000", "#64748b", False),
-            ("     (即 0.04 kg / 1.0x10⁻⁴ in²)", "#64748b", False),
-            ("  4. 力值(N) = 力值(g) / 1000 x 9.8", "#64748b", False),
-            ("", "#64748b", False),
-            # ("验收判据 (Failure Criteria)", "#1e293b", True),
-            # ("  - 1X: 低于此值即为不合格", "#64748b", False),
-            # ("  - 1.25X: 低于此值且粘附 < 50% 为不合格", "#64748b", False),
-            # ("  - 2X: 低于此值且粘附 < 10% 为不合格", "#64748b", False),
+            ("参考标准：MIL-STD-883H Method 2019.9 (Figure 2019-4)", "InfoLabel"),
+            ("", "InfoLabel"),
+            ("适用范围：预制金锡 (Preform/Pre-coated) 芯片剪切力计算", "ErrorLabel"),
+            ("", "InfoLabel"),
+            ("面积范围限制", "StepTitle"),
+            ("  - 面积 < 5x10⁻⁴ in²: 力值按比例计算", "InfoLabel"),
+            ("  - 5x10⁻⁴ ~ 64x10⁻⁴ in²: 线性插值区域", "InfoLabel"),
+            ("  - 面积 > 64x10⁻⁴ in²: 标准要求 min 2.5 kgf (此计算器暂不适用)", "InfoLabel"),
+            ("", "InfoLabel"),
+            ("计算公式", "StepTitle"),
+            ("  1. 面积(mm²) = 长度 x 宽度", "InfoLabel"),
+            ("  2. 面积(in²) = 面积(mm²) / 645.16", "InfoLabel"),
+            ("  3. 1X 力值(g) = 面积(in²) x 400 x 1000", "InfoLabel"),
+            ("     (即 0.04 kg / 1.0x10⁻⁴ in²)", "InfoLabel"),
+            ("  4. 力值(N) = 力值(g) / 1000 x 9.8", "InfoLabel"),
+            ("", "InfoLabel"),
         ]
-        for text, color, bold in info:
+        for text, obj_name in info:
             lb = QLabel(text)
-            w = "700" if bold else "400"
-            lb.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: {w};")
+            lb.setObjectName(obj_name)
             v.addWidget(lb)
 
         v.addStretch()
@@ -239,8 +225,10 @@ class ShearTab(QWidget):
                 g_lb, n_lb = self.result_widgets[mult]
                 g_lb.setText("不适用")
                 n_lb.setText("不适用")
-                g_lb.setStyleSheet("font-size: 15px; font-weight: 700; color: #dc2626;")
-                n_lb.setStyleSheet("font-size: 15px; font-weight: 700; color: #dc2626;")
+                g_lb.setObjectName("ForceValue")
+                n_lb.setObjectName("ForceValue")
+                g_lb.setStyleSheet("color: #dc2626; font-weight: 700;")
+                n_lb.setStyleSheet("color: #dc2626; font-weight: 700;")
             self.btn_copy.setEnabled(False)
             self.prompt.setVisible(False)
             return
@@ -258,8 +246,8 @@ class ShearTab(QWidget):
             g_lb, n_lb = self.result_widgets[mult]
             g_lb.setText(f"{g_base:.1f} g")
             n_lb.setText(f"{g_base / 1000 * 9.8:.4f} N")
-            g_lb.setStyleSheet("font-size: 15px; font-weight: 600; color: #1e293b;")
-            n_lb.setStyleSheet("font-size: 15px; font-weight: 600; color: #1e293b;")
+            g_lb.setObjectName("ForceValue")
+            n_lb.setObjectName("ForceValue")
 
         self.btn_copy.setEnabled(True)
         self.prompt.setVisible(False)
@@ -268,12 +256,13 @@ class ShearTab(QWidget):
         self.lbl_area_mm2.setText("0.0000 平方毫米")
         self.lbl_area_in2.setText("0.0000 平方英寸")
         self.area_warn.setVisible(False)
+        self.area_warn.setObjectName("WarningBox")
         for mult in (1.0, 1.25, 2.0):
             g_lb, n_lb = self.result_widgets[mult]
             g_lb.setText("0.0 g")
             n_lb.setText("0.0000 N")
-            g_lb.setStyleSheet("font-size: 15px; font-weight: 600; color: #1e293b;")
-            n_lb.setStyleSheet("font-size: 15px; font-weight: 600; color: #1e293b;")
+            g_lb.setObjectName("ForceValue")
+            n_lb.setObjectName("ForceValue")
         self.btn_copy.setEnabled(False)
         self.prompt.setVisible(True)
 

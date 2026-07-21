@@ -131,6 +131,122 @@ QPushButton#SecondaryBtn:checked {
     font-weight: 600;
 }
 
+/* 卡片标题 - 页面大标题 */
+QLabel#CardTitle {
+    font-size: 22px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+/* 卡片副标题 */
+QLabel#CardSubtitle {
+    color: #64748b;
+    font-size: 14px;
+}
+
+/* 统计面板 */
+QFrame#StatCard {
+    background: #f1f5f9;
+    border-radius: 10px;
+    padding: 8px;
+}
+
+/* 统计数值文本 */
+QLabel#StatValue {
+    color: #475569;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* 警告框 */
+QLabel#WarningBox {
+    color: #dc2626;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+    background: #fef2f2;
+    border-radius: 6px;
+}
+
+/* 结果卡片（剪切力面板） */
+QFrame#ResultCard {
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+/* 力值 / 结果数值 */
+QLabel#ForceValue {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+/* 徽章 (x1 / x1.25 / x2) */
+QLabel#ForceBadge {
+    font-weight: 700;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 4px;
+}
+
+/* 面积数值 */
+QLabel#AreaValue {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+/* 错误/警告文字 */
+QLabel#ErrorLabel {
+    color: #ef4444;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* 蓝色提示文字 */
+QLabel#BlueLabel {
+    color: #4299e1;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* 计数大号结果 */
+QLabel#CountResult {
+    color: #1e293b;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+/* 全局表单输入 */
+QLineEdit {
+    border: 1.5px solid #cbd5e0;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    background: white;
+}
+QLineEdit:focus {
+    border-color: #4299e1;
+}
+
+/* 全局表格 */
+QTableWidget {
+    background-color: white;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    gridline-color: #f1f5f9;
+    alternate-background-color: #f8fafc;
+}
+QHeaderView::section {
+    background-color: #f8fafc;
+    padding: 8px;
+    border: none;
+    border-bottom: 2px solid #e2e8f0;
+    font-weight: 600;
+    color: #475569;
+}
+
 /* 成功按钮 - 绿色 */
 QPushButton#SuccessBtn {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -247,19 +363,5 @@ QCheckBox::indicator:checked {
 DIALOG_STYLESHEET = """
 QDialog {
     background-color: #f0f4f8;
-}
-QTableWidget {
-    background-color: white;
-    border-radius: 12px;
-    border: 1px solid #e2e8f0;
-    gridline-color: #f1f5f9;
-}
-QHeaderView::section {
-    background-color: #f8fafc;
-    padding: 8px;
-    border: none;
-    border-bottom: 2px solid #e2e8f0;
-    font-weight: 600;
-    color: #475569;
 }
 """

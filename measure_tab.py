@@ -14,7 +14,8 @@ from PyQt6.QtGui import QColor
 
 from ui_components import (create_primary_button, create_secondary_button,
                            create_danger_button, create_step_title,
-                           create_info_label, create_success_label)
+                           create_info_label, create_success_label,
+                           create_stat_value)
 from measure_canvas import MeasureCanvas
 
 
@@ -66,7 +67,7 @@ class MeasureTab(QWidget):
         v.addWidget(create_primary_button("打开图片", self.load_image))
 
         # ---- 标定 ----
-        v.addWidget(self._sep("标定"))
+        v.addWidget(create_step_title("标定"))
         calib_row = QHBoxLayout()
         self.btn_calib = create_secondary_button("划线标定", self.toggle_calib, checkable=True)
         self.btn_clear_calib = create_secondary_button("X", self.clear_calib)
@@ -79,7 +80,7 @@ class MeasureTab(QWidget):
         v.addWidget(self.lbl_calib)
 
         # ---- 测量 ----
-        v.addWidget(self._sep("距离测量"))
+        v.addWidget(create_step_title("距离测量"))
         meas_row = QHBoxLayout()
         self.btn_measure = create_secondary_button("测量模式", self.toggle_measure, checkable=True)
         self.btn_undo = create_secondary_button("撤销", self.undo_last)
@@ -92,32 +93,29 @@ class MeasureTab(QWidget):
         v.addWidget(self.lbl_hint)
 
         # ---- 统计 ----
-        v.addWidget(self._sep("统计"))
+        v.addWidget(create_step_title("统计"))
         self.stat_box = QFrame()
-        self.stat_box.setObjectName("StatBox")
-        self.stat_box.setStyleSheet("QFrame#StatBox { background: #f1f5f9; border-radius: 10px; padding: 8px; }")
+        self.stat_box.setObjectName("StatCard")
         stat_lo = QVBoxLayout(self.stat_box)
         stat_lo.setContentsMargins(12, 8, 12, 8)
         stat_lo.setSpacing(2)
-        self.lbl_count = QLabel("测量数量: 0")
-        self.lbl_min = QLabel("最小距离: —")
-        self.lbl_max = QLabel("最大距离: —")
-        self.lbl_mean = QLabel("平均距离: —")
-        self.lbl_total = QLabel("总距离: —")
+        self.lbl_count = create_stat_value("测量数量: 0")
+        self.lbl_min = create_stat_value("最小距离: —")
+        self.lbl_max = create_stat_value("最大距离: —")
+        self.lbl_mean = create_stat_value("平均距离: —")
+        self.lbl_total = create_stat_value("总距离: —")
         for lb in [self.lbl_count, self.lbl_min, self.lbl_max, self.lbl_mean, self.lbl_total]:
-            lb.setStyleSheet("color: #475569; font-size: 13px; font-weight: 500;")
             stat_lo.addWidget(lb)
         v.addWidget(self.stat_box)
 
         # ---- 数据表格 ----
-        v.addWidget(self._sep("测量数据"))
+        v.addWidget(create_step_title("测量数据"))
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["#", "距离 (μm)", "距离 (px)"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setMaximumHeight(300)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("alternate-background-color: #f8fafc;")
         v.addWidget(self.table)
 
         # ---- 导出 ----
@@ -132,10 +130,6 @@ class MeasureTab(QWidget):
         outer.addWidget(scroll)
         scroll.setWidget(content)
         return sidebar
-
-    @staticmethod
-    def _sep(text):
-        return create_step_title(f"── {text} ──")
 
     # ---------- 信号连接 ----------
 
@@ -205,7 +199,7 @@ class MeasureTab(QWidget):
             self.btn_measure.setChecked(False)
             self.canvas.setCursor(Qt.CursorShape.CrossCursor)
             self.lbl_calib.setText("在图上拖拽画一条已知长度的参考线")
-            self.lbl_calib.setStyleSheet("color: #4299e1; font-size: 13px; font-weight: 500;")
+            self.lbl_calib.setObjectName("BlueLabel")
         else:
             self.canvas.mode = 'none'
             self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
@@ -216,7 +210,7 @@ class MeasureTab(QWidget):
         self.canvas.clear_calibration()
         self.pixel_scale = 0.0
         self.lbl_calib.setText("未标定")
-        self.lbl_calib.setStyleSheet("color: #ef4444; font-size: 13px; font-weight: 500;")
+        self.lbl_calib.setObjectName("ErrorLabel")
         self.btn_measure.setChecked(False)
         self.canvas.mode = 'none'
         self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
@@ -225,10 +219,10 @@ class MeasureTab(QWidget):
     def _show_calib_status(self):
         if self.pixel_scale > 0:
             self.lbl_calib.setText(f"标定成功   1 μm = {self.pixel_scale:.2f} px")
-            self.lbl_calib.setStyleSheet("color: #10b981; font-size: 13px; font-weight: 600;")
+            self.lbl_calib.setObjectName("SuccessLabel")
         else:
             self.lbl_calib.setText("未标定")
-            self.lbl_calib.setStyleSheet("color: #ef4444; font-size: 13px; font-weight: 500;")
+            self.lbl_calib.setObjectName("ErrorLabel")
 
     def finish_calib(self, p1, p2):
         self.canvas.mode = 'none'

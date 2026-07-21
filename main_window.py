@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QHeaderView, QDialog, QInputDialog, QFrame,
                              QMessageBox, QScrollArea, QSizePolicy,
                              QGraphicsDropShadowEffect, QLabel, QPushButton, QSlider,
-                             QTabWidget, QSpinBox, QDoubleSpinBox)
+                             QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QIcon, QColor, QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication
@@ -26,7 +26,8 @@ from image import (extract_threshold_contour, contour_to_polygon,
 from ui_components import (create_primary_button, create_secondary_button,
                            create_success_button, create_danger_button,
                            create_step_title, create_info_label, create_success_label,
-                           create_slider_with_label, create_checkbox, create_groupbox)
+                           create_slider_with_label, create_checkbox, create_groupbox,
+                           CollapsibleSection)
 from measure_tab import MeasureTab
 from shear_tab import ShearTab
 from counting_tab import CountingTab
@@ -67,13 +68,17 @@ class MainWindow(QMainWindow):
         analysis_tab = QWidget()
         analysis_layout = QHBoxLayout(analysis_tab)
         analysis_layout.setContentsMargins(16, 16, 16, 16)
-        analysis_layout.setSpacing(16)
+        analysis_layout.setSpacing(0)
 
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         sidebar = self._create_sidebar()
-        analysis_layout.addWidget(sidebar)
-
+        splitter.addWidget(sidebar)
         self.canvas = ImageCanvas()
-        analysis_layout.addWidget(self.canvas, 1)
+        splitter.addWidget(self.canvas)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([360, 640])
+        analysis_layout.addWidget(splitter)
 
         self._connect_signals()
 
@@ -128,7 +133,6 @@ class MainWindow(QMainWindow):
         sidebar = QFrame()
         sidebar.setObjectName("SidebarCard")
         sidebar.setMinimumWidth(320)
-        sidebar.setMaximumWidth(450)
         sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         # 阴影效果
@@ -148,7 +152,7 @@ class MainWindow(QMainWindow):
         # 内容容器
         sb_content = QWidget()
         sb_layout = QVBoxLayout(sb_content)
-        sb_layout.setContentsMargins(24, 24, 24, 24)
+        sb_layout.setContentsMargins(16, 16, 16, 16)
         sb_layout.setSpacing(14)
         sb_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -165,176 +169,148 @@ class MainWindow(QMainWindow):
 
     def _add_sidebar_components(self, layout):
         """添加侧边栏组件"""
-        # 标题
-        # header = QLabel("金锡焊空洞分析")
-        # header.setObjectName("HeaderTitle")
-        # layout.addWidget(header)
-
-        # 上传按钮
+        # 上传
         btn_load = create_primary_button("点击上传 SEM 图片", self.load_image)
         layout.addWidget(btn_load)
 
-        # 标定区域
+        # ── 标定 ──
         layout.addWidget(create_step_title("比例尺标定"))
-        
-        self.btn_calib = create_secondary_button("点击划线标定", self.start_calibration, checkable=True)
+        self.btn_calib = create_secondary_button("划线标定", self.start_calibration, checkable=True)
         self.btn_calib.setEnabled(False)
         layout.addWidget(self.btn_calib)
-        
         self.lbl_scale_info = create_info_label("未标定！")
         layout.addWidget(self.lbl_scale_info)
 
-        # 焊层定义
+        # ── 焊锡层定义 ──
         layout.addWidget(create_step_title("焊锡层定义"))
-
-        # 工具按钮
-        tool_layout = QHBoxLayout()
+        tool_row = QHBoxLayout()
         self.btn_poly = create_secondary_button("多边形框选", checkable=True)
         self.btn_rect = create_secondary_button("矩形框+阈值", checkable=True)
         self.btn_poly.clicked.connect(lambda: self.set_tool_mode('poly'))
         self.btn_rect.clicked.connect(lambda: self.set_tool_mode('rect'))
-        tool_layout.addWidget(self.btn_poly)
-        tool_layout.addWidget(self.btn_rect)
-        layout.addLayout(tool_layout)
-        
-        # 阈值滑块组
+        tool_row.addWidget(self.btn_poly)
+        tool_row.addWidget(self.btn_rect)
+        layout.addLayout(tool_row)
+
         self.grp_layer_thresh = create_groupbox("调节焊层阈值")
         self._setup_layer_threshold_group()
         layout.addWidget(self.grp_layer_thresh)
-
-        # 重置按钮
-        # btn_reset = create_danger_button("重置/清除选区", self.reset_roi)
-        # layout.addWidget(btn_reset)
-        
         self.lbl_layer_info = create_success_label()
         layout.addWidget(self.lbl_layer_info)
 
-        # 空洞计算
+        # ── 缺陷识别 ──
         layout.addWidget(create_step_title("缺陷识别"))
-        
         self.grp_void = create_groupbox("空洞检测设置")
         self._setup_void_detection_group()
         layout.addWidget(self.grp_void)
 
-        # 结果框
+        # ── 结果 ──
         self.result_box = QLabel("等待计算...")
         self.result_box.setObjectName("ResultBox")
         self.result_box.setWordWrap(True)
         layout.addWidget(self.result_box)
-        
-        # 截图按钮
-        btn_screenshot = create_secondary_button("一键截图复制", self.save_screenshot)
-        layout.addWidget(btn_screenshot)
 
-        # 导出按钮
-        btn_detail = create_secondary_button("查看/导出详细数据", self.show_detail_table)
-        layout.addWidget(btn_detail)
+        # ── 操作 ──
+        action_row = QHBoxLayout()
+        btn_screenshot = create_secondary_button("截图复制", self.save_screenshot)
+        btn_detail = create_secondary_button("导出数据", self.show_detail_table)
+        action_row.addWidget(btn_screenshot)
+        action_row.addWidget(btn_detail)
+        layout.addLayout(action_row)
 
         layout.addStretch()
 
     def _setup_layer_threshold_group(self):
         """设置焊层阈值组"""
         vbox = QVBoxLayout()
-        
+
         self.slider_layer, self.lbl_layer_val = create_slider_with_label(
             0, 255, 100, self.update_layer_preview)
-        
-        self.lbl_vertex_val = create_info_label("Vertices: 24")
-        self.lbl_vertex_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        self.slider_vertices, _ = create_slider_with_label(
-            3, 120, 24, self.on_vertex_count_changed)
-        
-        self.chk_snap_edge = create_checkbox("Snap to edge", False, self.toggle_snap_edges)
-        
-        self.lbl_edit_tip = QLabel("Double-click edge to add point; Delete removes selected vertex")
-        self.lbl_edit_tip.setWordWrap(True)
-        self.lbl_edit_tip.setStyleSheet("color: #718096; font-size: 12px;")
-        
+
         btn_confirm = create_success_button("确认选区", self.confirm_layer_roi)
         btn_reset = create_danger_button("重置/清除选区", self.reset_roi)
-        
-        self.chk_roi_overlay = create_checkbox("选区绿色蒙版", True, self.toggle_roi_overlay)
 
         vbox.addWidget(self.lbl_layer_val)
         vbox.addWidget(self.slider_layer)
-        vbox.addWidget(self.lbl_vertex_val)
-        vbox.addWidget(self.slider_vertices)
-        vbox.addWidget(self.chk_snap_edge)
-        vbox.addWidget(self.lbl_edit_tip)
         vbox.addWidget(btn_confirm)
         vbox.addWidget(btn_reset)
-        vbox.addWidget(self.chk_roi_overlay)
-        
-        
+
+        # 高级选项
+        adv = CollapsibleSection("多边形编辑")
+        self.lbl_vertex_val = create_info_label("Vertices: 24")
+        self.lbl_vertex_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.slider_vertices, _ = create_slider_with_label(
+            3, 120, 24, self.on_vertex_count_changed)
+        self.chk_snap_edge = create_checkbox("Snap to edge", False, self.toggle_snap_edges)
+        self.lbl_edit_tip = QLabel("双击边新增顶点 · Delete 删除选中")
+        self.lbl_edit_tip.setWordWrap(True)
+        self.lbl_edit_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        self.chk_roi_overlay = create_checkbox("选区绿色蒙版", True, self.toggle_roi_overlay)
+
+        adv.addWidget(self.lbl_vertex_val)
+        adv.addWidget(self.slider_vertices)
+        adv.addWidget(self.chk_snap_edge)
+        adv.addWidget(self.lbl_edit_tip)
+        adv.addWidget(self.chk_roi_overlay)
+        vbox.addWidget(adv)
+
         self.grp_layer_thresh.setLayout(vbox)
 
     def _setup_void_detection_group(self):
         """设置空洞检测组"""
         vbox = QVBoxLayout()
-        
-        vbox.addWidget(QLabel("空洞识别阈值:"))
-        
-        thresh_row = QHBoxLayout()
+
+        # 阈值
+        thresh_header = QHBoxLayout()
+        thresh_header.addWidget(QLabel("识别阈值:"))
+        thresh_header.addStretch()
+        btn_otsu = create_secondary_button("自动 (Otsu)")
+        btn_otsu.clicked.connect(self.auto_otsu_threshold)
+        thresh_header.addWidget(btn_otsu)
+        vbox.addLayout(thresh_header)
+
         self.slider_void, self.lbl_void_val = create_slider_with_label(
             0, 255, 80, self.calculate_voids)
-        thresh_row.addWidget(self.lbl_void_val)
-        thresh_row.addWidget(self.slider_void)
-        vbox.addLayout(thresh_row)
-
-        btn_otsu = create_secondary_button("自动阈值 (Otsu)")
-        btn_otsu.clicked.connect(self.auto_otsu_threshold)
-        vbox.addWidget(btn_otsu)
+        vbox.addWidget(self.lbl_void_val)
+        vbox.addWidget(self.slider_void)
 
         # 显示选项
-        vbox.addWidget(QLabel("显示选项:"))
         display_row = QHBoxLayout()
-        self.chk_labels = create_checkbox("空洞编号", False, self.toggle_visuals)
+        self.chk_labels = create_checkbox("编号", False, self.toggle_visuals)
         display_row.addWidget(self.chk_labels)
-        self.chk_fill = create_checkbox("空洞红色填充", True, self.toggle_visuals)
+        self.chk_fill = create_checkbox("红色填充", True, self.toggle_visuals)
         display_row.addWidget(self.chk_fill)
-        # self.chk_roi_overlay = create_checkbox("选区绿色蒙版", True, self.toggle_roi_overlay)
-        # display_row.addWidget(self.chk_roi_overlay)
         vbox.addLayout(display_row)
 
         # 面积过滤
-        vbox.addWidget(QLabel("面积过滤 (像素):"))
         area_row = QHBoxLayout()
-        area_row.addWidget(QLabel("最小:"))
+        area_row.addWidget(QLabel("面积过滤:"))
         self.spin_min_area = QSpinBox()
         self.spin_min_area.setRange(0, 100000)
         self.spin_min_area.setValue(1)
         self.spin_min_area.valueChanged.connect(self.on_area_filter_changed)
-        area_row.addWidget(self.spin_min_area)
-        area_row.addWidget(QLabel("最大:"))
+        area_row.addWidget(self.spin_min_area, 1)
+        area_row.addWidget(QLabel("~"))
         self.spin_max_area = QSpinBox()
         self.spin_max_area.setRange(0, 1000000)
         self.spin_max_area.setValue(0)
         self.spin_max_area.setSpecialValueText("不限")
         self.spin_max_area.valueChanged.connect(self.on_area_filter_changed)
-        area_row.addWidget(self.spin_max_area)
+        area_row.addWidget(self.spin_max_area, 1)
         vbox.addLayout(area_row)
-
-        # ROI 边界腐蚀
-        erosion_row = QHBoxLayout()
-        erosion_row.addWidget(QLabel("边界腐蚀 (px):"))
-        self.spin_erosion = QSpinBox()
-        self.spin_erosion.setRange(0, 20)
-        self.spin_erosion.setValue(self.roi_erosion_px)
-        self.spin_erosion.setToolTip("将 ROI 边界向内腐蚀 N 像素，断开边界伪影与空洞的连通")
-        self.spin_erosion.valueChanged.connect(self.on_erosion_changed)
-        erosion_row.addWidget(self.spin_erosion)
-        vbox.addLayout(erosion_row)
 
         # 编辑按钮
         edit_row = QHBoxLayout()
-        self.btn_void_del = create_secondary_button("删除误检", checkable=True)
+        self.btn_void_del = create_secondary_button("删除", checkable=True)
         self.btn_void_del.clicked.connect(lambda: self.set_void_edit_mode('delete'))
         edit_row.addWidget(self.btn_void_del)
-        
-        self.btn_void_add = create_secondary_button("添加遗漏", checkable=True)
+        self.btn_void_add = create_secondary_button("添加", checkable=True)
         self.btn_void_add.clicked.connect(lambda: self.set_void_edit_mode('add'))
         edit_row.addWidget(self.btn_void_add)
+        self.btn_void_undo = create_secondary_button("撤销")
+        self.btn_void_undo.clicked.connect(self.on_undo)
+        edit_row.addWidget(self.btn_void_undo)
+        vbox.addLayout(edit_row)
 
         self.lbl_add_tip = QLabel("点击空洞内部 → 局部 Otsu 自动检测\nCtrl+滚轮调阈值偏移 → 双击确认")
         self.lbl_add_tip.setWordWrap(True)
@@ -342,33 +318,22 @@ class MainWindow(QMainWindow):
         self.lbl_add_tip.setVisible(False)
         vbox.addWidget(self.lbl_add_tip)
 
-        self.btn_void_undo = create_secondary_button("撤销")
-        self.btn_void_undo.clicked.connect(self.on_undo)
-        edit_row.addWidget(self.btn_void_undo)
+        # 高级设置(折叠)
+        adv = CollapsibleSection("高级设置")
 
-        vbox.addLayout(edit_row)
+        erosion_row = QHBoxLayout()
+        erosion_row.addWidget(QLabel("边界腐蚀 (px):"))
+        self.spin_erosion = QSpinBox()
+        self.spin_erosion.setRange(0, 20)
+        self.spin_erosion.setValue(self.roi_erosion_px)
+        self.spin_erosion.setToolTip("将 ROI 边界向内腐蚀，断开边界伪影与空洞的连通")
+        self.spin_erosion.valueChanged.connect(self.on_erosion_changed)
+        erosion_row.addWidget(self.spin_erosion)
+        erosion_row.addStretch()
+        adv.addLayout(erosion_row)
 
-        self.btn_void_local = QPushButton("局部阈值调节")
-        self.btn_void_local.setObjectName("SecondaryBtn")
-        self.btn_void_local.setCheckable(True)
-        self.btn_void_local.clicked.connect(self.toggle_void_selection_mode)
-
-        self.lbl_local_tip = QLabel("单击放置 → 滚轮调半径 → 双击确认\nShift+滚轮调阈值 · 右键双击删除")
-        self.lbl_local_tip.setWordWrap(True)
-        self.lbl_local_tip.setStyleSheet("color: #718096; font-size: 12px;")
-
-        vbox.addWidget(self.btn_void_local)
-        vbox.addWidget(self.lbl_local_tip)
-
-        # ==== 增强检测 ====
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #e2e8f0;")
-        vbox.addWidget(sep)
-
-        vbox.addWidget(QLabel("增强检测设置:"))
         self.chk_enhanced = create_checkbox("启用增强检测", True, self.on_enhanced_toggled)
-        vbox.addWidget(self.chk_enhanced)
+        adv.addWidget(self.chk_enhanced)
 
         self.enhanced_widgets = QWidget()
         ew = QVBoxLayout(self.enhanced_widgets)
@@ -376,7 +341,6 @@ class MainWindow(QMainWindow):
 
         self.chk_clahe = create_checkbox("CLAHE 对比度增强", True, self.calculate_voids)
         ew.addWidget(self.chk_clahe)
-
         clip_row = QHBoxLayout()
         clip_row.addWidget(QLabel("对比度:"))
         self.slider_clahe_clip = QSlider(Qt.Orientation.Horizontal)
@@ -409,16 +373,24 @@ class MainWindow(QMainWindow):
         ew.addWidget(self.chk_edge)
 
         self.enhanced_widgets.setVisible(True)
-        vbox.addWidget(self.enhanced_widgets)
+        adv.addWidget(self.enhanced_widgets)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #e2e8f0;")
-        vbox.addWidget(sep2)
+        self.btn_void_local = QPushButton("局部阈值调节")
+        self.btn_void_local.setObjectName("SecondaryBtn")
+        self.btn_void_local.setCheckable(True)
+        self.btn_void_local.clicked.connect(self.toggle_void_selection_mode)
+        adv.addWidget(self.btn_void_local)
 
-        btn_restore = create_danger_button("一键恢复默认设置")
+        self.lbl_local_tip = QLabel("单击放置 → 滚轮调半径 → 双击确认\nShift+滚轮调阈值 · 右键双击删除")
+        self.lbl_local_tip.setWordWrap(True)
+        self.lbl_local_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        adv.addWidget(self.lbl_local_tip)
+
+        btn_restore = create_danger_button("恢复默认设置")
         btn_restore.clicked.connect(self.restore_void_defaults)
-        vbox.addWidget(btn_restore)
+        adv.addWidget(btn_restore)
+
+        vbox.addWidget(adv)
 
         self.grp_void.setLayout(vbox)
 
