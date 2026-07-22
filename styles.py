@@ -40,7 +40,7 @@ QWidget {
 /* 侧边栏卡片 */
 QFrame#SidebarCard {
     background-color: rgba(255, 255, 255, 0.85);
-    border-radius: 20px;
+    border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.5);
 }
 
@@ -92,7 +92,7 @@ QPushButton#PrimaryBtn {
         stop:0 #63b3ed, stop:1 #4299e1);
     color: white;
     border: none;
-    border-radius: 14px;
+    border-radius: 6px;
     padding: 14px 20px;
     font-weight: 600;
     font-size: 15px;
@@ -115,7 +115,7 @@ QPushButton#SecondaryBtn {
     background-color: rgba(66, 153, 225, 0.15);
     color: #2b6cb0;
     border: none;
-    border-radius: 12px;
+    border-radius: 6px;
     padding: 10px 16px;
     font-weight: 500;
     min-height: 16px;
@@ -147,7 +147,7 @@ QLabel#CardSubtitle {
 /* 统计面板 */
 QFrame#StatCard {
     background: #f1f5f9;
-    border-radius: 10px;
+    border-radius: 6px;
     padding: 8px;
 }
 
@@ -233,7 +233,7 @@ QLineEdit:focus {
 /* 全局表格 */
 QTableWidget {
     background-color: white;
-    border-radius: 12px;
+    border-radius: 6px;
     border: 1px solid #e2e8f0;
     gridline-color: #f1f5f9;
     alternate-background-color: #f8fafc;
@@ -253,7 +253,7 @@ QPushButton#SuccessBtn {
         stop:0 #68d391, stop:1 #48bb78);
     color: white;
     border: none;
-    border-radius: 12px;
+    border-radius: 6px;
     padding: 10px 16px;
     font-weight: 600;
     min-height: 16px;
@@ -268,7 +268,7 @@ QPushButton#DangerBtn {
     background-color: rgba(245, 101, 101, 0.15);
     color: #c53030;
     border: none;
-    border-radius: 12px;
+    border-radius: 6px;
     padding: 10px 16px;
     font-weight: 500;
     min-height: 16px;
@@ -303,7 +303,7 @@ QSlider::sub-page:horizontal {
 QLabel#ResultBox {
     background-color: rgba(15, 23, 42, 0.9);
     color: #68d391;
-    border-radius: 14px;
+    border-radius: 8px;
     padding: 16px;
     font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
     font-size: 14px;
@@ -328,7 +328,7 @@ QLabel#SuccessLabel {
 QGroupBox {
     background-color: transparent;
     border: 1.5px solid rgba(203, 213, 224, 0.5);
-    border-radius: 14px;
+    border-radius: 8px;
     margin-top: 8px;
     padding: 10px;
     font-weight: 600;

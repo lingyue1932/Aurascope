@@ -41,11 +41,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Aurascope V4.3   by: LINGYUE")
         self.resize(1000, 600)
         
-        # 设置窗口图标
-        try:
-            self.setWindowIcon(QIcon(r"logo.png"))
-        except:
-            pass
+        # # 设置窗口图标
+        # try:
+        #     self.setWindowIcon(QIcon(r"logo.ico"))
+        # except:
+        #     pass
 
         # 核心数据
         self.pixel_scale = 0
@@ -181,18 +181,18 @@ class MainWindow(QMainWindow):
         self.lbl_scale_info = create_info_label("未标定！")
         layout.addWidget(self.lbl_scale_info)
 
-        # ── 焊锡层定义 ──
-        layout.addWidget(create_step_title("焊锡层定义"))
-        tool_row = QHBoxLayout()
+        # ── 缺陷区域定义 ──
+        layout.addWidget(create_step_title("缺陷区域定义"))
+        # tool_row = QHBoxLayout()
         self.btn_poly = create_secondary_button("多边形框选", checkable=True)
         self.btn_rect = create_secondary_button("矩形框+阈值", checkable=True)
         self.btn_poly.clicked.connect(lambda: self.set_tool_mode('poly'))
         self.btn_rect.clicked.connect(lambda: self.set_tool_mode('rect'))
-        tool_row.addWidget(self.btn_poly)
-        tool_row.addWidget(self.btn_rect)
-        layout.addLayout(tool_row)
+        # tool_row.addWidget(self.btn_poly)
+        # tool_row.addWidget(self.btn_rect)
+        # layout.addLayout(tool_row)
 
-        self.grp_layer_thresh = create_groupbox("调节焊层阈值")
+        self.grp_layer_thresh = create_groupbox("调节缺陷区域识别阈值")
         self._setup_layer_threshold_group()
         layout.addWidget(self.grp_layer_thresh)
         self.lbl_layer_info = create_success_label()
@@ -221,7 +221,7 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
     def _setup_layer_threshold_group(self):
-        """设置焊层阈值组"""
+        """设置缺陷区域识别阈值组"""
         vbox = QVBoxLayout()
 
         self.slider_layer, self.lbl_layer_val = create_slider_with_label(
@@ -230,8 +230,12 @@ class MainWindow(QMainWindow):
         btn_confirm = create_success_button("确认选区", self.confirm_layer_roi)
         btn_reset = create_danger_button("重置/清除选区", self.reset_roi)
 
+        tool_row = QHBoxLayout()
         vbox.addWidget(self.lbl_layer_val)
         vbox.addWidget(self.slider_layer)
+        vbox.addLayout(tool_row)
+        tool_row.addWidget(self.btn_poly)
+        tool_row.addWidget(self.btn_rect)
         vbox.addWidget(btn_confirm)
         vbox.addWidget(btn_reset)
 

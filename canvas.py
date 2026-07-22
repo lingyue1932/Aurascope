@@ -3,8 +3,8 @@
 import cv2
 import numpy as np
 from PyQt6.QtWidgets import QWidget, QMessageBox
-from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QTimer
-from PyQt6.QtGui import QImage, QPainter, QPen, QColor, QBrush, QFont, QCursor
+from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QRect, QTimer
+from PyQt6.QtGui import QImage, QPainter, QPen, QColor, QBrush, QFont, QCursor, QPixmap
 
 
 class ImageCanvas(QWidget):
@@ -29,6 +29,14 @@ class ImageCanvas(QWidget):
 
         self.img_cv = None
         self.img_qt = None
+
+        self.logo = None
+        try:
+            pixmap = QPixmap("logo.png")
+            if not pixmap.isNull():
+                self.logo = pixmap.scaled(400, 400, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        except:
+            pass
 
         self.scale = 1.0
         self.offset = QPointF(0, 0)
@@ -653,10 +661,17 @@ class ImageCanvas(QWidget):
         painter.fillRect(self.rect(), QColor('#f0f4f8'))
 
         if self.img_qt is None:
+            if self.logo:
+                logo_x = (self.width() - self.logo.width()) // 2
+                logo_y = (self.height() - self.logo.height()) // 2 - 40
+                painter.drawPixmap(logo_x, logo_y, self.logo)
             painter.setPen(QColor('#94a3b8'))
             font = QFont('Segoe UI', 14)
             painter.setFont(font)
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, '点击左侧按钮上传图片')
+            rect = self.rect()
+            if self.logo:
+                rect = QRect(0, logo_y + self.logo.height() + 20, self.width(), 40)
+            # painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, '点击左侧按钮上传图片')
             return
 
         painter.save()
