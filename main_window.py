@@ -31,6 +31,7 @@ from ui_components import (create_primary_button, create_secondary_button,
 from measure_tab import MeasureTab
 from shear_tab import ShearTab
 from counting_tab import CountingTab
+from stitching_tab import StitchingTab
 
 
 class MainWindow(QMainWindow):
@@ -95,6 +96,10 @@ class MainWindow(QMainWindow):
         # Tab 4: 物料计数
         self.counting_tab = CountingTab()
         self.tab_widget.addTab(self.counting_tab, "    物料计数    ")
+
+        # Tab 5: 图像拼接
+        self.stitching_tab = StitchingTab()
+        self.tab_widget.addTab(self.stitching_tab, "    图像拼接    ")
 
         # 初始禁用状态
         self.toggle_steps(False)
@@ -423,11 +428,12 @@ class MainWindow(QMainWindow):
     def load_image(self):
         """加载图片"""
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择图片", "", "Images (*.png *.jpg *.jpeg *.bmp *.tif)")
+            self, "选择图片", "", 
+            "图像文件 (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;TIF文件 (*.tif *.tiff);;所有文件 (*)")
         if not path:
             return
-            
-        img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        
+        img = self._read_image(path)
         if img is None:
             QMessageBox.warning(self, "错误", "图片加载失败！请检查文件格式/路径")
             return
@@ -449,6 +455,58 @@ class MainWindow(QMainWindow):
         self.btn_poly.setChecked(False)
         self.btn_rect.setChecked(False)
 
+    def _read_image(self, path):
+        """读取图像文件（支持TIF）"""
+        import os
+        ext = os.path.splitext(path)[1].lower()
+        
+        # TIF 文件使用 tifffile 读取
+        if ext in {'.tif', '.tiff'}:
+            try:
+                import tifffile
+                img = tifffile.imread(path)
+                
+                # 处理多通道
+                if len(img.shape) == 3:
+                    if img.shape[2] == 3:
+                        # RGB
+                        if img.dtype != np.uint8:
+                            img = (img / img.max() * 255).astype(np.uint8)
+                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    elif img.shape[2] == 4:
+                        # RGBA
+                        if img.dtype != np.uint8:
+                            img = (img / img.max() * 255).astype(np.uint8)
+                        img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                    elif img.shape[0] == 3:
+                        # CHW 格式
+                        if img.dtype != np.uint8:
+                            img = (img / img.max() * 255).astype(np.uint8)
+                        img = np.transpose(img, (1, 2, 0))
+                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                elif len(img.shape) == 2:
+                    # 灰度图
+                    if img.dtype != np.uint8:
+                        img = (img / img.max() * 255).astype(np.uint8)
+                
+                return img
+            except Exception as e:
+                print(f"tifffile 读取失败: {e}")
+                # 尝试用 OpenCV 读取
+                img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+                if img is not None:
+                    if img.dtype != np.uint8:
+                        img = (img / img.max() * 255).astype(np.uint8)
+                    return img
+                return None
+        
+        # 其他格式使用 OpenCV
+        img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        if img is not None:
+            if img.dtype != np.uint8:
+                img = (img / img.max() * 255).astype(np.uint8)
+        return img
+
     def _reset_all_state(self):
         """重置所有状态"""
         self.pixel_scale = 0
@@ -468,6 +526,27 @@ class MainWindow(QMainWindow):
         self.canvas.set_local_brush_regions([])
         self.canvas.set_edge_snap_mask(None)
         self.canvas.set_roi_edit_enabled(False)
+
+    def set_stitching_result(self, image, mask):
+        """接收图像拼接结果，作为普通图片加载到空洞分析模块"""
+        self.canvas.set_image(image)
+        self._reset_all_state()
+        
+        # UI重置（和 load_image 一样）
+        self.lbl_scale_info.setText("未标定！")
+        self.lbl_layer_info.setText("")
+        self.result_box.setText("等待计算...")
+        self.grp_layer_thresh.setVisible(True)
+        self.toggle_steps(True)
+        self.btn_poly.setEnabled(True)
+        self.btn_rect.setEnabled(True)
+        self.grp_void.setEnabled(False)
+        
+        self.btn_calib.setChecked(False)
+        self.btn_poly.setChecked(False)
+        self.btn_rect.setChecked(False)
+        
+        self.canvas.update()
 
     # ========== 标定 ==========
     def start_calibration(self):
