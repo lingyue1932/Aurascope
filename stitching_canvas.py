@@ -481,16 +481,16 @@ class StitchingCanvas(QWidget):
         painter.setFont(font)
         
         # 图像信息
-        status = "✓ 已标记" if img_data['marked'] else "✗ 未标记"
+        status = "√ 已标记" if img_data['marked'] else "× 未标记"
         info = f"图像 {self.current_image_idx + 1}/{len(self.images)}: {img_data['name']} [{status}]"
         painter.drawText(10, 25, info)
         
         if self.mark_mode:
             painter.setPen(QColor(255, 0, 0))
             if len(self.temp_points) == 0:
-                painter.drawText(10, 50, "请点击第一个标记点（金锡左端）")
+                painter.drawText(10, 50, "请点击第一个标记点（金锡左侧最下方端点）")
             elif len(self.temp_points) == 1:
-                painter.drawText(10, 50, "请点击第二个标记点（金锡右端）")
+                painter.drawText(10, 50, "请点击第二个标记点（金锡右侧最下方端点）")
         
         # 显示导航提示
         painter.setPen(QColor(150, 150, 150))
