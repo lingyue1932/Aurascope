@@ -1189,7 +1189,7 @@ def learn_taught_model(gray, solder_mask, void_marks, px_per_um=0.0,
         v_min, v_max = 4, None
 
     return {
-        'schema_version': 2,
+        'schema_version': 3,
         'type': 'taught',
         'name': '',
         'note': '',
@@ -1207,9 +1207,17 @@ def learn_taught_model(gray, solder_mask, void_marks, px_per_um=0.0,
         },
         'void': {
             'threshold': round(float(t_void), 1) if t_void is not None else None,
-            'min_area': v_min,
-            'max_area': v_max,
+            # 面积下限：0 = 自动（按带面积 0.02%，下限 12px²）；
+            # 上限：None = 自动（按带面积 30%，仅作分割失败兜底）
+            # 两者都不再默认取"点选尺寸的 0.5× / 2×"——那会把比点选更小的、
+            # 以及最大的空洞分别排除掉
+            'min_area': 0,
+            'min_area_taught': v_min,
+            'max_area': None,
+            'max_area_taught': v_max,
             'min_roundness': 0.0,
+            # 深度容差（灰阶偏移）：正值 = 更包容，可把偏浅的暗斑也算作空洞
+            'depth_offset': 0.0,
             'taught_count': len(blob_areas),
             'median': round(stats_void['median'], 1) if stats_void else None,
         },
@@ -1332,11 +1340,30 @@ def apply_taught_model(gray, model):
                     f"（{br_diag.get('zones_bot', 0) + br_diag.get('zones_top', 0)} 处）")
         diag = {**(diag or {}), 'bridge': br_diag}
 
-    voids = detect_voids_in_band(
-        gray, band, t_void,
-        min_area=void_cfg.get('min_area') or 1,
-        max_area=void_cfg.get('max_area'),
+    # 空洞参数：面积下限默认按带面积自动定（不再受"点选尺寸"牵连）；
+    # 深度容差 offset 正值 = 更包容（能把偏浅的暗斑也算作空洞）
+    min_area_cfg = void_cfg.get('min_area')
+    min_area_used = (int(min_area_cfg) if min_area_cfg else
+                     auto_min_void_area(solder_area))
+    max_area_cfg = void_cfg.get('max_area')
+    max_area_used = (int(max_area_cfg) if max_area_cfg else
+                     auto_max_void_area(solder_area))
+    depth_off = float(void_cfg.get('depth_offset') or 0)
+    t_void_used = float(t_void) + depth_off
+
+    voids_all = detect_voids_in_band(
+        gray, band, t_void_used,
+        min_area=1,
+        max_area=None,
         min_roundness=void_cfg.get('min_roundness') or 0.0)
+    # 按面积下限/上限筛选，并重新编号（避免编号出现空洞）
+    voids = [v for v in voids_all
+             if v['area_px'] >= min_area_used and v['area_px'] <= max_area_used]
+    for i, v in enumerate(voids, 1):
+        v['id'] = i
+    # 因面积下限/上限未计入的候选数（让"漏检"可见）
+    below_min = sum(1 for v in voids_all if v['area_px'] < min_area_used)
+    above_max = sum(1 for v in voids_all if v['area_px'] > max_area_used)
     void_area = float(sum(v['area_px'] for v in voids))
     return {
         'ok': True,
@@ -1346,7 +1373,12 @@ def apply_taught_model(gray, model):
         'void_count': len(voids),
         'void_area_px': void_area,
         'void_rate': (void_area / solder_area) if solder_area else 0.0,
-        't_void_used': float(t_void),
+        'max_void_px': float(max((v['area_px'] for v in voids), default=0.0)),
+        't_void_used': float(t_void_used),
+        'min_area_used': int(min_area_used),
+        'max_area_used': int(max_area_used),
+        'below_min_area_count': int(below_min),
+        'above_max_area_count': int(above_max),
         't_solder_used': float(t_used),
         'brightness_drift': round(drift, 3),
         'deviation': dev,
@@ -1556,6 +1588,87 @@ def bridge_edge_voids(band, gray, t_void, band_gray_med, win_px=0,
     if bridged > max_bridge_frac * a0:
         return band, {**diag, 'reason': 'bridge_too_large'}
     return new, {**diag, 'reason': 'ok'}
+
+
+def auto_min_void_area(band_area_px):
+    """空洞面积下限（自动档）：按焊层带面积尺度定，而不是按点选尺寸定
+
+    原先取"0.5 × 点选的最小空洞面积"——但用户通常只点几个明显的大空洞，
+    结果比它小的空洞全被排除；一旦换到空洞更小的子系列（或别的倍率），
+    就成片漏检。改为按带面积定：0.02%，下限 12px²（约 4×4 像素，挡噪点）。
+    """
+    return int(max(12, round(float(band_area_px) * 0.0002)))
+
+
+def auto_max_void_area(band_area_px):
+    """空洞面积上限（自动档）：只作为"分割失败"的兜底，不是"点选过的最大"
+
+    原先取"2 × 点选的最大空洞面积"——用户教的时候往往点几个小的，
+    上限就压到了小空洞的量级，于是**最大的空洞反被排除**（实测：配方上限
+    626px²，把 680/812px² 的纯黑大空洞全挡掉）。空洞大小本无上限，
+    只保留一个物理常识兜底：单个空洞不可能超过焊层带面积的 30%。
+    """
+    return int(max(400, round(float(band_area_px) * 0.30)))
+
+
+def make_thumb(img_bgr, band_mask, voids, target_h=46):
+    """生成结果缩略图（供结果胶片条）：焊层淡绿 + 空洞红框，不带文字"""
+    if img_bgr is None or band_mask is None:
+        return None
+    if img_bgr.ndim == 2:                       # 单通道灰度图要先转 BGR
+        img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+    h, w = img_bgr.shape[:2]
+    s = target_h / float(max(h, 1))
+    out = cv2.resize(img_bgr, (max(1, int(round(w * s))), target_h),
+                     interpolation=cv2.INTER_AREA)
+    mb = cv2.resize(band_mask, (out.shape[1], out.shape[0]),
+                    interpolation=cv2.INTER_NEAREST)
+    layer = out.copy()
+    layer[mb > 0] = (0, 140, 0)
+    out = cv2.addWeighted(layer, 0.42, out, 0.58, 0)
+    for v in voids or []:
+        x, y, ww, hh = v['rect']
+        cv2.rectangle(out, (int(x * s), int(y * s)),
+                      (max(int((x + ww) * s), int(x * s) + 2),
+                       max(int((y + hh) * s), int(y * s) + 2)),
+                      (0, 0, 220), 1)
+    return out
+
+
+def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10):
+    """把所有图纵向堆叠成"汇总大图"，顶部带汇总统计块
+
+    Args:
+        entries: [{'img','band_mask','voids','lines','warn'}...] 按顺序堆叠
+        summary_lines: 顶部汇总统计的文字行
+        sheet_width: 统一宽度（按宽度等比缩放，保留长宽比）
+        gap: 图间空隙
+    Returns:
+        np.ndarray: 汇总大图（BGR）
+    """
+    tiles = []
+    if summary_lines:
+        lh = 10 + (18 + 7) * len(summary_lines)
+        header = np.full((lh, sheet_width, 3), 255, np.uint8)
+        header = _draw_text_block(header, summary_lines, font_size=18)
+        tiles.append(header)
+        tiles.append(np.full((gap, sheet_width, 3), 235, np.uint8))
+    for e in entries:
+        img = e.get('img')
+        if img is None:
+            continue
+        tile = annotate_result(img, e['band_mask'], e.get('voids') or [],
+                               lines=e.get('lines') or [])
+        h, w = tile.shape[:2]
+        nh = max(1, int(round(h * (sheet_width / float(max(w, 1))))))
+        tile = cv2.resize(tile, (sheet_width, nh), interpolation=cv2.INTER_AREA)
+        if e.get('warn'):
+            cv2.rectangle(tile, (0, 0), (sheet_width - 1, nh - 1), (0, 0, 220), 3)
+        tiles.append(tile)
+        tiles.append(np.full((gap, sheet_width, 3), 235, np.uint8))
+    if not tiles:
+        return None
+    return np.vstack(tiles[:-1])
 
 
 def read_scale_bar(gray, template, model_bar, fallback_px_per_um=0.0):

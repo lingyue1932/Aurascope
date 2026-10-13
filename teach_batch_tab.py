@@ -25,16 +25,17 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
                              QTableWidgetItem, QHeaderView, QInputDialog,
                              QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
                              QProgressBar, QProgressDialog, QComboBox,
-                             QListWidget, QListWidgetItem, QAbstractItemView,
-                             QSplitter, QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
-from PyQt6.QtGui import QColor, QImage
+                             QListWidget, QListWidgetItem, QAbstractItemView, QGridLayout,
+                             QSpinBox, QSplitter, QStackedWidget, QToolButton,
+                             QApplication)
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QSize
+from PyQt6.QtGui import QColor, QImage, QPixmap, QIcon
 
 from canvas import ImageCanvas
 from image import (polygon_to_mask, otsu_threshold, locate_solder_band,
                    grab_local_dark_blob, learn_taught_model, apply_taught_model,
                    read_scale_bar, resample_polygon_points, two_class_threshold,
-                   annotate_result)
+                   annotate_result, make_thumb, render_summary_sheet)
 from recipe import list_recipes, load_recipe, save_taught, load_bar_template
 from ui_components import (create_primary_button, create_secondary_button,
                            create_success_button, create_danger_button,
@@ -120,6 +121,12 @@ class BatchWorker(QThread):
 
                 r = apply_taught_model(gray, self.model)
                 light = {k: v for k, v in r.items() if k not in self.HEAVY_KEYS}
+                # 结果缩略图（供结果区胶片条；带焊层/空洞叠加，便于一眼看出问题）
+                if r.get('ok'):
+                    try:
+                        light['thumb'] = make_thumb(img, r['band_mask'], r['voids'])
+                    except Exception:
+                        light['thumb'] = None
                 light['filename'] = fname
                 light['path'] = path
                 light['px_per_um_used'] = px_um
@@ -182,170 +189,346 @@ class TeachBatchTab(QWidget):
 
     # ================== UI ==================
 
+    STEP_TITLES = ("① 样板图", "② 点选空洞", "③ 焊层区域", "④ 比例尺", "⑤ 学习")
+
     def init_ui(self):
-        lo = QHBoxLayout(self)
-        lo.setContentsMargins(16, 16, 16, 16)
-        lo.setSpacing(0)
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(14, 12, 14, 12)
+        lo.setSpacing(10)
 
-        # 用可拖拽分隔条：左侧功能面板宽度可横向调节（与「空洞分析」Tab 一致）
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        sidebar = self._build_sidebar()
-        self.splitter.addWidget(sidebar)
+        # ── 顶部：流程模式切换（示教 / 批量）──
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        self.btn_mode_teach = create_primary_button("① 示教（教一次）",
+                                                    self._set_mode_teach)
+        self.btn_mode_teach.setCheckable(True)
+        self.btn_mode_batch = create_secondary_button("② 批量检测（跑一批）",
+                                                      self._set_mode_batch)
+        self.btn_mode_batch.setCheckable(True)
+        mode_row.addWidget(self.btn_mode_teach)
+        mode_row.addWidget(self.btn_mode_batch)
+        self.lbl_mode_tip = create_info_label("")
+        mode_row.addWidget(self.lbl_mode_tip, 1)
+        lo.addLayout(mode_row)
+
+        # ── 主区：上=工作区（左面板 + 画布），下=结果区（批量后出现）──
+        self.vsplit = QSplitter(Qt.Orientation.Vertical)
+        self.hsplit = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = self.hsplit          # 兼容旧名
+        self.left_stack = QStackedWidget()
+        self.left_stack.addWidget(self._build_teach_panel())
+        self.left_stack.addWidget(self._build_batch_panel())
+        self.hsplit.addWidget(self.left_stack)
         self.canvas = ImageCanvas()
-        self.splitter.addWidget(self.canvas)
-        self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)
-        start = min(460, max(340, self._sb_min))
-        self.splitter.setSizes([start, max(560, 1000 - start)])
-        lo.addWidget(self.splitter)
+        self.hsplit.addWidget(self.canvas)
+        self.hsplit.setStretchFactor(0, 0)
+        self.hsplit.setStretchFactor(1, 1)
+        self.vsplit.addWidget(self.hsplit)
 
+        self.results = self._build_results_panel()
+        self.results.setVisible(False)
+        self.vsplit.addWidget(self.results)
+        self.vsplit.setStretchFactor(0, 1)
+        self.vsplit.setStretchFactor(1, 0)
+        self.vsplit.setSizes([420, 240])
+        lo.addWidget(self.vsplit)
+
+        self._sb_min = self._compute_left_min_width()
+        self.left_stack.setMinimumWidth(self._sb_min)
+        start = min(460, max(340, self._sb_min))
+        self.hsplit.setSizes([start, max(560, 1100 - start)])
+        self.set_teach_step(0)
+        self._set_mode_teach()
         self._connect()
 
-    def _compute_sidebar_min_width(self):
-        """按"折叠区全部展开"的真实需求算侧栏最小宽度
+    # ---------- 面板骨架 ----------
 
-        折叠区收起时其内部控件不参与 sizeHint，若按收起状态定宽，
-        用户一展开「批量检测」内容就被裁掉（实测展开后需 334px）。
-        """
-        for cs in self._collapsibles:
-            cs.container.setVisible(True)
-        self._sb_content.adjustSize()
-        QApplication.processEvents()
-        hint = self._sb_content.sizeHint().width()
-        for cs in self._collapsibles:
-            cs.container.setVisible(False)
-        self._sb_content.adjustSize()
-        return max(300, min(520, hint + 12))
-
-    def _build_sidebar(self):
-        sidebar = QFrame()
-        sidebar.setObjectName("SidebarCard")
-        sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-
+    @staticmethod
+    def _panel_frame(obj_name="SidebarCard"):
+        f = QFrame()
+        f.setObjectName(obj_name)
+        f.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(30)
         shadow.setOffset(0, 4)
         shadow.setColor(QColor(0, 0, 0, 25))
-        sidebar.setGraphicsEffect(shadow)
+        f.setGraphicsEffect(shadow)
+        return f
 
+    @staticmethod
+    def _scroll_into(frame, content):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        return frame
 
+    def _compute_left_min_width(self):
+        """按两个面板"全部内容可见"的真实需求算左栏最小宽度
+
+        步骤容器只显示当前步时，其余容器不参与 sizeHint——若按当时状态定宽，
+        用户切到别的步骤或展开批量面板就会把内容裁掉。
+        """
+        for c in self._step_containers:
+            c.setVisible(True)
+        self._teach_content.adjustSize()
+        self._batch_content.adjustSize()
+        QApplication.processEvents()
+        hint = max(self._teach_content.sizeHint().width(),
+                   self._batch_content.sizeHint().width())
+        self._apply_step_visibility()
+        self._teach_content.adjustSize()
+        return max(300, min(520, hint + 12))
+
+    # ---------- 示教页 ----------
+
+    def _build_teach_panel(self):
         content = QWidget()
-        self._sb_content = content            # 供最小宽度测量
-        self._collapsibles = []
+        self._teach_content = content
         v = QVBoxLayout(content)
-        v.setContentsMargins(20, 20, 20, 20)
-        v.setSpacing(12)
+        v.setContentsMargins(18, 18, 18, 18)
+        v.setSpacing(10)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # ── ① 上传样板图 ──
-        v.addWidget(create_step_title("① 上传样板图"))
-        v.addWidget(create_primary_button("上传样板图", self.load_sample))
+        strip = QVBoxLayout()
+        strip.setSpacing(3)
+        self.step_buttons = []
+        for i, t in enumerate(self.STEP_TITLES):
+            b = create_secondary_button(
+                f"{t}", lambda _=False, i=i: self.set_teach_step(i), checkable=True)
+            b.setStyleSheet(
+                "QPushButton { text-align: left; padding: 7px 10px; font-size: 12px; }"
+                "QPushButton:checked { background: #4299e1; color: #ffffff;"
+                " font-weight: 600; border-color: #4299e1; }")
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            strip.addWidget(b)
+            self.step_buttons.append(b)
+        v.addLayout(strip)
+        v.addWidget(create_info_label("每步只展开当前项，点上面步骤可回退修改"))
 
-        # ── ② 点选典型空洞（放在焊层区域之前：空洞是焊层带内部的锚点）──
-        v.addWidget(create_step_title("② 点选典型空洞"))
-        void_row = QHBoxLayout()
+        self._step_containers = []
+
+        def _new_step():
+            c = QWidget()
+            lay = QVBoxLayout(c)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(8)
+            self._step_containers.append(c)
+            v.addWidget(c)
+            return lay
+
+        # ① 上传样板图
+        s = _new_step()
+        s.addWidget(create_step_title("上传一张有代表性的样板图"))
+        s.addWidget(create_primary_button("上传样板图", self.load_sample))
+
+        # ② 点选典型空洞
+        s = _new_step()
+        s.addWidget(create_step_title("点几个典型空洞（点明显的大小即可）"))
+        row = QHBoxLayout()
         self.btn_teach_void = create_secondary_button("点选空洞", self.toggle_teach_void,
                                                       checkable=True)
-        void_row.addWidget(self.btn_teach_void)
-        v.addLayout(void_row)
+        row.addWidget(self.btn_teach_void)
+        s.addLayout(row)
         self.list_marks = QListWidget()
-        self.list_marks.setMaximumHeight(80)
-        self.list_marks.setMinimumWidth(150)   # 不让它撑大面板宽度
+        self.list_marks.setMaximumHeight(76)
+        self.list_marks.setMinimumWidth(150)
         self.list_marks.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection)
         self.list_marks.setToolTip("已点选的空洞，可删除选错的那一个")
-        v.addWidget(self.list_marks)
-        mark_row = QHBoxLayout()
+        s.addWidget(self.list_marks)
+        row = QHBoxLayout()
         self.btn_del_mark = create_secondary_button("删除选中", self.delete_selected_mark)
-        mark_row.addWidget(self.btn_del_mark)
+        row.addWidget(self.btn_del_mark)
         self.btn_clear_marks = create_danger_button("清除全部", self.clear_void_marks)
-        mark_row.addWidget(self.btn_clear_marks)
-        v.addLayout(mark_row)
-        self.lbl_void = create_info_label("已点选 0 个（点典型大小的即可，不用标全）")
-        v.addWidget(self.lbl_void)
+        row.addWidget(self.btn_clear_marks)
+        s.addLayout(row)
+        self.lbl_void = create_info_label("已点选 0 个")
+        s.addWidget(self.lbl_void)
 
-        # ── ③ 示范焊层区域 ──
-        v.addWidget(create_step_title("③ 示范焊层区域"))
-        roi_row = QHBoxLayout()
+        # ③ 示范焊层区域
+        s = _new_step()
+        s.addWidget(create_step_title("确认/修正焊层区域"))
+        row = QHBoxLayout()
         self.btn_auto_band = create_secondary_button("自动识别焊层带", self.auto_draft_roi)
-        roi_row.addWidget(self.btn_auto_band)
+        row.addWidget(self.btn_auto_band)
         self.btn_poly = create_secondary_button("多边形手绘", self.start_poly_roi,
                                                 checkable=True)
-        roi_row.addWidget(self.btn_poly)
-        v.addLayout(roi_row)
+        row.addWidget(self.btn_poly)
+        s.addLayout(row)
         self.btn_edit_roi = create_secondary_button("编辑顶点", self.toggle_edit_roi,
                                                     checkable=True)
-        v.addWidget(self.btn_edit_roi)
+        s.addWidget(self.btn_edit_roi)
         self.lbl_roi = create_info_label("未定义（点过空洞后可用「自动识别」，或手绘）")
-        v.addWidget(self.lbl_roi)
+        s.addWidget(self.lbl_roi)
         self.lbl_roi_tip = QLabel("移动光标到边界 → 最近的顶点高亮 → 拖动即可\n"
                                   "双击边新增顶点 · 选中顶点按 Delete 删除")
         self.lbl_roi_tip.setWordWrap(True)
         self.lbl_roi_tip.setStyleSheet("color: #718096; font-size: 12px;")
-        v.addWidget(self.lbl_roi_tip)
+        s.addWidget(self.lbl_roi_tip)
 
-        # ── ④ 标定比例尺 ──
-        v.addWidget(create_step_title("④ 标定比例尺"))
+        # ④ 标定比例尺
+        s = _new_step()
+        s.addWidget(create_step_title("在比例尺上划一条线（用于 μm 换算）"))
         self.btn_calib = create_secondary_button("在比例尺上划线", self.start_calib,
                                                  checkable=True)
-        v.addWidget(self.btn_calib)
-        self.lbl_calib = create_info_label("未标定（划线后输入实际 μm 值）")
-        v.addWidget(self.lbl_calib)
+        s.addWidget(self.btn_calib)
+        self.lbl_calib = create_info_label("未标定")
+        s.addWidget(self.lbl_calib)
 
-        # ── ⑤ 学习并保存 ──
-        v.addWidget(create_step_title("⑤ 学习并保存"))
+        # ⑤ 学习并保存
+        s = _new_step()
+        s.addWidget(create_step_title("学习并保存为配方"))
         self.btn_learn = create_primary_button("开始学习", self.on_learn)
-        v.addWidget(self.btn_learn)
+        s.addWidget(self.btn_learn)
         self.btn_save_recipe = create_success_button("保存为示教配方", self.on_save_recipe)
         self.btn_save_recipe.setEnabled(False)
-        v.addWidget(self.btn_save_recipe)
-        self.lbl_learn = create_info_label("完成 ①~④ 后点「开始学习」，会在图上回放检测结果")
-        v.addWidget(self.lbl_learn)
+        s.addWidget(self.btn_save_recipe)
+        self.lbl_learn = create_info_label("完成 ①~④ 后点「开始学习」")
+        s.addWidget(self.lbl_learn)
 
-        # ── 批量检测 ──
-        batch = CollapsibleSection("批量检测（同系列多图全自动）")
-        self._collapsibles.append(batch)
+        v.addStretch()
+        return self._scroll_into(self._panel_frame(), content)
+
+    # ---------- 批量页（左栏：控制项）----------
+
+    def _build_batch_panel(self):
+        content = QWidget()
+        self._batch_content = content
+        v = QVBoxLayout(content)
+        v.setContentsMargins(18, 18, 18, 18)
+        v.setSpacing(10)
+        v.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        v.addWidget(create_step_title("选择配方与批次"))
+        row = QHBoxLayout()
         self.combo_recipe = QComboBox()
         self.combo_recipe.setMinimumWidth(110)
         self.combo_recipe.setToolTip("已保存的示教配方")
-        recipe_row = QHBoxLayout()
-        recipe_row.addWidget(self.combo_recipe, 1)
-        btn_refresh = create_secondary_button("刷新", self.refresh_recipe_combo)
-        recipe_row.addWidget(btn_refresh)
-        batch.addLayout(recipe_row)
+        row.addWidget(self.combo_recipe, 1)
+        row.addWidget(create_secondary_button("刷新", self.refresh_recipe_combo))
+        v.addLayout(row)
 
         self.btn_folder = create_secondary_button("选择批次文件夹", self.pick_folder)
-        batch.addWidget(self.btn_folder)
+        v.addWidget(self.btn_folder)
         self.lbl_folder = create_info_label("未选择文件夹")
-        batch.addWidget(self.lbl_folder)
+        v.addWidget(self.lbl_folder)
 
-        run_row = QHBoxLayout()
+        v.addWidget(create_step_title("空洞判定（漏检多就放宽）"))
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(5)
+
+        self.chk_min_auto = create_checkbox("自动", True, self._on_sens_changed)
+        self.chk_min_auto.setToolTip("按焊层带面积自动定（0.02%，下限 12px²）")
+        self.spin_min = QSpinBox()
+        self.spin_min.setRange(1, 200000)
+        self.spin_min.setValue(12)
+        self.spin_min.setSuffix(" px²")
+        self.spin_min.setEnabled(False)
+        self.spin_min.setToolTip("小于它的暗斑不计入（挡噪点）")
+        grid.addWidget(QLabel("面积下限"), 0, 0)
+        grid.addWidget(self.chk_min_auto, 0, 1)
+        grid.addWidget(self.spin_min, 0, 2)
+
+        self.chk_max_auto = create_checkbox("自动", True, self._on_sens_changed)
+        self.chk_max_auto.setToolTip("按焊层带面积自动定（30%，仅作分割失败兜底）")
+        self.spin_max = QSpinBox()
+        self.spin_max.setRange(50, 10 ** 7)
+        self.spin_max.setValue(2000)
+        self.spin_max.setSuffix(" px²")
+        self.spin_max.setEnabled(False)
+        self.spin_max.setToolTip("大于它的暗斑不计入——调太小会把大空洞漏掉")
+        grid.addWidget(QLabel("面积上限"), 1, 0)
+        grid.addWidget(self.chk_max_auto, 1, 1)
+        grid.addWidget(self.spin_max, 1, 2)
+
+        self.spin_depth = QSpinBox()
+        self.spin_depth.setRange(-60, 60)
+        self.spin_depth.setValue(0)
+        self.spin_depth.setSuffix(" 灰阶")
+        self.spin_depth.setToolTip(
+            "空洞阈值偏移：正值更包容，能把偏浅的暗斑也算作空洞（0 = 用示教学到的）")
+        grid.addWidget(QLabel("深度容差"), 2, 0)
+        grid.addWidget(create_info_label("（0=按示教）"), 2, 1)
+        grid.addWidget(self.spin_depth, 2, 2)
+        v.addLayout(grid)
+
+        self.lbl_sens = create_info_label("当前：面积下限自动、上限自动、深度容差 0")
+        self.lbl_sens.setWordWrap(True)
+        v.addWidget(self.lbl_sens)
+
+        row = QHBoxLayout()
         self.btn_run = create_primary_button("开始批量", self.start_batch)
-        run_row.addWidget(self.btn_run)
+        row.addWidget(self.btn_run)
         self.btn_cancel = create_danger_button("取消", self.cancel_batch)
         self.btn_cancel.setEnabled(False)
-        run_row.addWidget(self.btn_cancel)
-        batch.addLayout(run_row)
+        row.addWidget(self.btn_cancel)
+        v.addLayout(row)
 
         self.progress = QProgressBar()
         self.progress.setValue(0)
         self.progress.setTextVisible(True)
-        batch.addWidget(self.progress)
+        v.addWidget(self.progress)
         self.lbl_current = create_info_label("")
-        batch.addWidget(self.lbl_current)
+        v.addWidget(self.lbl_current)
 
-        # 汇总
-        self.lbl_total = create_info_label("总空洞率: —")
-        self.lbl_total.setObjectName("StatValue")
-        batch.addWidget(self.lbl_total)
-        self.lbl_stats = create_info_label("块均值: —")
-        batch.addWidget(self.lbl_stats)
+        tip = QLabel("提示：结果在下方结果区查看；点缩略图或表格行即可核对与修正。\n"
+                     "换一类图（不同倍率/成像方式）请重新示教——偏差校验会提醒。")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color: #718096; font-size: 12px;")
+        v.addWidget(tip)
+        v.addStretch()
+        return self._scroll_into(self._panel_frame(), content)
 
-        # 结果表（点击行 = 在右侧画布查看该图的检测叠加）
+    # ---------- 结果区（批量后出现，横跨画布下方）----------
+
+    def _build_results_panel(self):
+        f = self._panel_frame()
+        v = QVBoxLayout(f)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(6)
+
+        # 汇总（3 行，小字号，避免长串换行错乱）
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        self.lbl_total = QLabel("总空洞率: —")
+        self.lbl_total.setStyleSheet(
+            "font-size: 17px; font-weight: 600; color: #0F6E56;")
+        head.addWidget(self.lbl_total)
+        self.lbl_stats = QLabel("")
+        self.lbl_stats.setStyleSheet("font-size: 12px; color: #4a5568;")
+        head.addWidget(self.lbl_stats, 1)
+        self.btn_collapse_results = create_secondary_button(
+            "收起结果区", self._toggle_results_collapse)
+        head.addWidget(self.btn_collapse_results)
+        v.addLayout(head)
+
+        # 缩略图胶片条（点小图 → 画布放大；异常描红边）
+        self.thumb_scroll = QScrollArea()
+        self.thumb_scroll.setWidgetResizable(True)
+        self.thumb_scroll.setFixedHeight(72)
+        self.thumb_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.thumb_host = QWidget()
+        self.thumb_row = QHBoxLayout(self.thumb_host)
+        self.thumb_row.setContentsMargins(2, 2, 2, 2)
+        self.thumb_row.setSpacing(6)
+        self.thumb_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.thumb_scroll.setWidget(self.thumb_host)
+        v.addWidget(self.thumb_scroll)
+
+        self.lbl_preview = create_info_label("预览: 未选择（点缩略图或表格行）")
+        self.lbl_preview.setStyleSheet("font-size: 12px; color: #4a5568;")
+        v.addWidget(self.lbl_preview)
+
+        body = QHBoxLayout()
+        body.setSpacing(10)
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(
@@ -353,82 +536,158 @@ class TeachBatchTab(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setMaximumHeight(260)
-        self.table.setMinimumWidth(170)        # 表格自带滚动条，不必撑大面板
+        self.table.setMinimumHeight(90)
+        self.table.setMinimumWidth(170)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.cellClicked.connect(self.preview_result)
-        batch.addWidget(self.table)
+        body.addWidget(self.table, 1)
 
-        self.lbl_preview = create_info_label(
-            "预览: 未选择（点击结果表任意行，在右侧查看该图的检测叠加）")
-        batch.addWidget(self.lbl_preview)
-
-        # ── 单图核对与修正 ──
-        fix = CollapsibleSection("单图核对与修正（先点选结果表某一行）")
-        self._collapsibles.append(fix)
-        fix_row1 = QHBoxLayout()
+        # 单图核对与修正：2 列网格，按钮不会被挤到重叠
+        fix = QFrame()
+        fix.setObjectName("InnerCard")
+        fix.setMinimumWidth(360)
+        fl = QVBoxLayout(fix)
+        fl.setContentsMargins(10, 8, 10, 8)
+        fl.setSpacing(5)
+        fl.addWidget(create_step_title("单图核对与修正"))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(5)
         self.btn_edit_band = create_secondary_button("编辑金锡区域",
                                                      self.toggle_edit_band, checkable=True)
-        fix_row1.addWidget(self.btn_edit_band)
-        self.btn_add_void = create_secondary_button("添加空洞",
-                                                    self.toggle_add_void, checkable=True)
-        fix_row1.addWidget(self.btn_add_void)
-        fix.addLayout(fix_row1)
-
-        fix_row1b = QHBoxLayout()
-        self.btn_del_void = create_secondary_button("删除空洞",
-                                                    self.toggle_del_void, checkable=True)
-        fix_row1b.addWidget(self.btn_del_void)
-        fix_row1b.addStretch()
-        fix.addLayout(fix_row1b)
-
-        fix_row2 = QHBoxLayout()
+        self.btn_add_void = create_secondary_button("添加空洞", self.toggle_add_void,
+                                                    checkable=True)
+        self.btn_del_void = create_secondary_button("删除空洞", self.toggle_del_void,
+                                                    checkable=True)
+        grid.addWidget(self.btn_edit_band, 0, 0)
+        grid.addWidget(self.btn_add_void, 0, 1)
+        grid.addWidget(self.btn_del_void, 1, 0)
         self.chk_labels = create_checkbox("显示序号", True, self.toggle_void_display)
-        fix_row2.addWidget(self.chk_labels)
         self.chk_fill = create_checkbox("红色填充", True, self.toggle_void_display)
-        fix_row2.addWidget(self.chk_fill)
-        fix.addLayout(fix_row2)
-
-        self.lbl_edit_tip = create_info_label(
-            "区域：光标移到边界上，最近顶点高亮后拖动 · 双击边加点 · Delete 删点\n"
-            "空洞：点空白处添加 / 点空洞删除")
-        fix.addWidget(self.lbl_edit_tip)
-
-        fix_row3 = QHBoxLayout()
+        grid.addWidget(self.chk_labels, 1, 1)
         self.btn_apply_edit = create_success_button("应用修改", self.apply_result_edit)
-        fix_row3.addWidget(self.btn_apply_edit)
-        self.btn_revert_edit = create_danger_button("还原自动结果",
-                                                    self.revert_result_edit)
-        fix_row3.addWidget(self.btn_revert_edit)
-        fix.addLayout(fix_row3)
-        batch.addWidget(fix)
+        self.btn_revert_edit = create_danger_button("还原自动", self.revert_result_edit)
+        grid.addWidget(self.btn_apply_edit, 2, 0)
+        grid.addWidget(self.btn_revert_edit, 2, 1)
+        fl.addLayout(grid)
+        self.lbl_edit_tip = create_info_label(
+            "区域：光标移到边界，最近顶点高亮后拖动 · 双击加点 · Delete 删点；"
+            "空洞：点空白添加 / 点空洞删除")
+        self.lbl_edit_tip.setStyleSheet("font-size: 11px; color: #718096;")
+        fl.addWidget(self.lbl_edit_tip)
+        body.addWidget(fix, 0)
+        v.addLayout(body, 1)
 
-        exp_row = QHBoxLayout()
-        self.btn_exp_cur = create_secondary_button("导出当前标注图",
-                                                   self.export_annotated_current)
-        exp_row.addWidget(self.btn_exp_cur)
-        self.btn_exp_all = create_secondary_button("导出全部标注图",
-                                                   self.export_annotated_all)
-        exp_row.addWidget(self.btn_exp_all)
-        batch.addLayout(exp_row)
-
+        exp = QHBoxLayout()
+        exp.setSpacing(8)
         self.btn_export = create_secondary_button("导出 CSV", self.export_csv)
         self.btn_export.setEnabled(False)
-        batch.addWidget(self.btn_export)
+        exp.addWidget(self.btn_export)
+        self.btn_exp_cur = create_secondary_button("导出当前标注图",
+                                                   self.export_annotated_current)
+        exp.addWidget(self.btn_exp_cur)
+        self.btn_exp_all = create_secondary_button("导出全部标注图",
+                                                   self.export_annotated_all)
+        exp.addWidget(self.btn_exp_all)
+        self.btn_exp_sheet = create_success_button("导出汇总大图",
+                                                   self.export_summary_sheet)
+        exp.addWidget(self.btn_exp_sheet)
+        exp.addStretch()
+        v.addLayout(exp)
+        return f
 
-        v.addWidget(batch)
-        v.addStretch()
-        scroll.setWidget(content)
+    def _toggle_results_collapse(self):
+        """收起/展开结果区（小屏幕上给画布让位）"""
+        self._results_collapsed = not getattr(self, '_results_collapsed', False)
+        if self._results_collapsed:
+            self._results_heights = tuple(self.vsplit.sizes())
+            self.thumb_scroll.setVisible(False)
+            self.lbl_preview.setVisible(False)
+            self.table.setVisible(False)
+            self.lbl_edit_tip.setVisible(False)
+            self.btn_collapse_results.setText("展开结果区")
+            self.vsplit.setSizes([max(1, self.vsplit.height() - 120), 120])
+        else:
+            self.thumb_scroll.setVisible(True)
+            self.lbl_preview.setVisible(True)
+            self.table.setVisible(True)
+            self.lbl_edit_tip.setVisible(True)
+            self.btn_collapse_results.setText("收起结果区")
+            h = max(260, int(self.vsplit.height() * 0.40))
+            self.vsplit.setSizes([max(1, self.vsplit.height() - h), h])
 
-        outer = QVBoxLayout(sidebar)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
-        self._sb_min = self._compute_sidebar_min_width()
-        sidebar.setMinimumWidth(self._sb_min)
+    # ---------- 模式与步骤 ----------
+
+    def _set_mode_teach(self):
+        self._mode = 'teach'
+        self.left_stack.setCurrentIndex(0)
+        self.btn_mode_teach.setChecked(True)
+        self.btn_mode_batch.setChecked(False)
+        self.lbl_mode_tip.setText(
+            "示教：教一次，得到可复用的检测配方（①→⑤）")
+        self.results.setVisible(False)
+        try:
+            self._refresh_step_states()
+        except Exception:
+            pass
+
+    def _set_mode_batch(self):
+        self._mode = 'batch'
+        self.left_stack.setCurrentIndex(1)
+        self.btn_mode_batch.setChecked(True)
+        self.btn_mode_teach.setChecked(False)
+        self.lbl_mode_tip.setText(
+            "批量：用配方跑一批图；结果显示在下方结果区，可逐张核对修正")
+        self.results.setVisible(True)
         self.refresh_recipe_combo()
-        return sidebar
+        if self.batch_results and not getattr(self, '_results_collapsed', False):
+            self._reset_results_split()
+
+    def _reset_results_split(self):
+        """结果区占约 38% 高度（小窗口下也给画布留出空间）"""
+        h = max(230, int(self.vsplit.height() * 0.38))
+        self.vsplit.setSizes([max(1, self.vsplit.height() - h), h])
+
+    def _step_done(self, i):
+        """该步是否已完成（用于步骤条打勾）"""
+        try:
+            if i == 0:
+                return self.gray is not None
+            if i == 1:
+                return bool(self.void_marks)
+            if i == 2:
+                return self.roi_mask is not None
+            if i == 3:
+                return (self.px_per_um or 0) > 0
+            if i == 4:
+                return self.model is not None
+        except Exception:
+            return False
+        return False
+
+    def _refresh_step_states(self):
+        """步骤条显示 ▶当前 / ✓已完成"""
+        cur = getattr(self, '_teach_step', 0)
+        for i, b in enumerate(getattr(self, 'step_buttons', [])):
+            mark = '▶ ' if i == cur else ('✓ ' if self._step_done(i) else '　 ')
+            b.setText(f"{mark}{self.STEP_TITLES[i]}")
+
+    def set_teach_step(self, i):
+        """切到示教第 i 步（只展开该步）"""
+        self._teach_step = int(i)
+        for k, b in enumerate(self.step_buttons):
+            b.setChecked(k == self._teach_step)
+        self._apply_step_visibility()
+        self._refresh_step_states()
+        if getattr(self, '_mode', 'teach') != 'teach':
+            self._set_mode_teach()
+
+    def _apply_step_visibility(self):
+        cur = getattr(self, '_teach_step', 0)
+        for k, c in enumerate(getattr(self, '_step_containers', [])):
+            c.setVisible(k == cur)
 
     def _connect(self):
         self.canvas.roi_poly_finished.connect(self.on_poly_roi)
@@ -849,6 +1108,18 @@ class TeachBatchTab(QWidget):
         if same_frac > 0.5:
             tip += "（周边过半像素与焊料同灰度，已自动剔除；若识别仍不准，请把示范区域画得更贴合焊层）"
         self.lbl_learn.setText(f"学习完成：{tip}")
+        self.set_teach_step(4)      # 学习完成后停在 ⑤
+        self._refresh_step_states()
+        # 展示"学习过程"窗口（做了什么、得到什么参数）
+        try:
+            from learn_dialog import LearnReportDialog, build_learn_items
+            preview = self.canvas.grab()
+            dlg = LearnReportDialog(build_learn_items(model), preview=preview,
+                                    title="学习过程与参数", parent=self)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.information(self, "学习完成",
+                                    f"学习完成（过程窗口打开失败：{e}）")
 
     def _render_preview(self, res):
         """样板图上回放：绿掩码 + 空洞标注 + 空洞率"""
@@ -940,6 +1211,7 @@ class TeachBatchTab(QWidget):
         self.preview_row = None
         self._reset_edit_modes()
         self.table.setRowCount(0)
+        self._clear_thumbs()
         self.lbl_total.setText("总空洞率: —")
         self.lbl_stats.setText("块均值: —")
         self.btn_export.setEnabled(False)
@@ -948,10 +1220,16 @@ class TeachBatchTab(QWidget):
         self.btn_cancel.setEnabled(True)
         self.preview_row = None
         self._batch_canceled = False
-        self.lbl_preview.setText("预览: 批量进行中…（结束后点击结果表任意行查看）")
+        self.lbl_preview.setText("预览: 批量进行中…（点缩略图或表格行查看）")
         # 缓存本次批量的模型与比例尺模板，预览/导出标注图时按需重算
         self._last_model = model
         self._last_bar_template = bar_template
+        # 空洞判定设置：派生模型（不改原配方）
+        model = self._sens_model() or model
+        if getattr(self, '_sens_changed', None):
+            self.lbl_current.setText("已调整：" + "、".join(self._sens_changed))
+        # 结果区就位（批量模式下可见）
+        self._set_mode_batch()
 
         self.worker = BatchWorker(self.batch_paths, model, bar_template)
         self.worker.progress.connect(self.on_progress)
@@ -985,6 +1263,7 @@ class TeachBatchTab(QWidget):
         if warn:
             for c in range(5):
                 self.table.item(row, c).setBackground(QColor(254, 249, 195))
+        self._add_thumb(row, r)
 
     def on_batch_finished(self, results):
         self.batch_results = results
@@ -999,6 +1278,10 @@ class TeachBatchTab(QWidget):
         ok = [r for r in results if r.get('ok') and r.get('solder_area_px')]
         if ok:
             self._update_summary()
+        if getattr(self, '_results_collapsed', False):
+            self._toggle_results_collapse()
+        else:
+            self._reset_results_split()
 
         # 自动跳到最该核查的一张：优先第一张异常，其次第一张正常
         target = None
@@ -1015,17 +1298,188 @@ class TeachBatchTab(QWidget):
             QMessageBox.information(
                 self, "已取消",
                 f"批量已取消，已完成 {len(results)}/{len(self.batch_paths)} 张\n"
-                f"（已完成的结果可在表格中查看，点击行可预览）")
+                f"（结果在下方结果区：点缩略图或表格行可逐张核对）")
         else:
             QMessageBox.information(
                 self, "完成",
                 f"批量检测完成：{len(results)} 张\n"
-                f"（异常图已在表格中标黄；点击任意行可在右侧查看该图检测叠加）")
+                f"结果在下方结果区：点缩略图（异常描红边）或表格行即可放大核对与修正；\n"
+                f"汇总信息见结果区顶部，可导出 CSV / 单图标注 / 汇总大图。")
+
+    def _on_sens_changed(self):
+        """自动勾选联动：勾上自动就禁用数值框，并显示当前生效值"""
+        auto_min = self.chk_min_auto.isChecked()
+        auto_max = self.chk_max_auto.isChecked()
+        self.spin_min.setEnabled(not auto_min)
+        self.spin_max.setEnabled(not auto_max)
+        parts = [
+            f"面积下限{'自动' if auto_min else str(self.spin_min.value()) + 'px²'}",
+            f"上限{'自动' if auto_max else str(self.spin_max.value()) + 'px²'}",
+            f"深度容差 {self.spin_depth.value()}",
+        ]
+        self.lbl_sens.setText("当前：" + "、".join(parts))
+
+    def _sens_model(self):
+        """按左栏的空洞判定设置派生模型（不修改原配方）
+
+        三项都可由用户用数值指定：面积下限/上限（各有"自动"档，按带面积定）、
+        深度容差（空洞阈值偏移，正值更包容）。用于"明明有空洞却检不出"时放宽。
+        """
+        base = self._last_model or self.model
+        if base is None:
+            return None
+        m = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
+        vcfg = dict(m.get('void') or {})
+        changed = []
+        if self.chk_min_auto.isChecked():
+            vcfg['min_area'] = 0
+        else:
+            vcfg['min_area'] = int(self.spin_min.value())
+            changed.append(f"下限{self.spin_min.value()}px²")
+        if self.chk_max_auto.isChecked():
+            vcfg['max_area'] = None
+        else:
+            vcfg['max_area'] = int(self.spin_max.value())
+            changed.append(f"上限{self.spin_max.value()}px²")
+        depth = float(self.spin_depth.value())
+        vcfg['depth_offset'] = depth
+        if depth:
+            changed.append(f"深度容差{depth:+.0f}")
+        m['void'] = vcfg
+        self._sens_changed = changed
+        return m
+
+    def _add_thumb(self, row, r=None):
+        """给结果区胶片条追加一个缩略图按钮
+
+        批量进行中 self.batch_results 还没赋值，所以结果由调用方传入。
+        """
+        if r is None:
+            if not (0 <= row < len(self.batch_results)):
+                return
+            r = self.batch_results[row]
+        btn = QToolButton()
+        btn.setCheckable(True)
+        btn.setAutoRaise(True)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        thumb = r.get('thumb')
+        if thumb is not None and getattr(thumb, 'size', 0):
+            arr = np.ascontiguousarray(thumb)
+            qimg = QImage(arr.data, arr.shape[1], arr.shape[0], arr.strides[0],
+                          QImage.Format.Format_BGR888).copy()
+            btn.setIcon(QIcon(QPixmap.fromImage(qimg)))
+            btn.setIconSize(QSize(arr.shape[1], arr.shape[0]))
+        rate = f"{r.get('void_rate', 0) * 100:.1f}%" if r.get('ok') else '失败'
+        btn.setText(f"{row + 1} · {rate}")
+        btn.setToolTip(
+            f"第 {row + 1} 张：{r.get('filename', '')}\n"
+            f"空洞率 {rate}　空洞 {r.get('void_count', '—')} 个\n"
+            f"{'；'.join(r.get('warnings') or []) or '无警告'}")
+        if (not r.get('ok')) or r.get('warnings'):
+            btn.setStyleSheet("QToolButton { border: 2px solid #C2410C;"
+                              " border-radius: 4px; padding: 2px; }")
+        else:
+            btn.setStyleSheet("QToolButton { border: 2px solid #DDD6FE;"
+                              " border-radius: 4px; padding: 2px; }")
+        btn.clicked.connect(lambda _=False, i=row: self.preview_result(i))
+        self.thumb_row.addWidget(btn)
+
+    def _mark_thumb_selected(self, row):
+        for i in range(self.thumb_row.count()):
+            w = self.thumb_row.itemAt(i).widget()
+            if isinstance(w, QToolButton):
+                w.setChecked(False)
+        w = self.thumb_row.itemAt(row).widget() if row < self.thumb_row.count() else None
+        if isinstance(w, QToolButton):
+            w.setChecked(True)
+
+    def _clear_thumbs(self):
+        while self.thumb_row.count():
+            it = self.thumb_row.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
 
     def on_batch_failed(self, msg):
         self.btn_run.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         QMessageBox.warning(self, "错误", f"批量处理出错: {msg}")
+
+    # ---------- 汇总 ----------
+
+    def _summary_lines(self, for_sheet=False):
+        """汇总统计（结果区与汇总大图共用）"""
+        ok = [r for r in self.batch_results
+              if r.get('ok') and r.get('solder_area_px')]
+        if not ok:
+            return []
+        tot_solder = sum(r['solder_area_px'] for r in ok)
+        tot_void = sum(float(r.get('void_area_px') or 0) for r in ok)
+        rates = [r['void_rate'] * 100 for r in ok]
+        cnts = [r['void_count'] for r in ok]
+        px_um = next((r.get('px_per_um_used') for r in ok
+                      if r.get('px_per_um_used')), 0.0) or 0.0
+        f_um = (lambda a: f"（{a / (px_um ** 2):.0f} μm²）") if px_um > 0 else (lambda a: "")
+        head = (f"总空洞率 {tot_void / tot_solder * 100:.2f}%　"
+                f"共 {len(self.batch_results)} 张"
+                f"（成功 {len(ok)}，异常 {len(self.batch_results) - len(ok)}"
+                + (f"，人工修正 {len(self.result_edits)} 张）" if self.result_edits else "）"))
+        mid = (f"块均值 {float(np.mean(rates)):.2f}% ± {float(np.std(rates)):.2f}　"
+               f"空洞率范围 {min(rates):.2f}% ~ {max(rates):.2f}%　"
+               f"空洞数 {min(cnts)} ~ {max(cnts)} 个")
+        tail = (f"总焊锡面积 {tot_solder} px²{f_um(tot_solder)}　"
+                f"总空洞面积 {tot_void:.0f} px²{f_um(tot_void)}　"
+                f"最大单个空洞 {max(float(r.get('max_void_px') or 0) for r in ok):.0f} px²")
+        if not for_sheet:
+            return [head, mid, tail]
+        return [head, mid, tail,
+                f"配方：{self.combo_recipe.currentText() or '—'}　"
+                f"空洞判定：{self.lbl_sens.text().replace('当前：', '')}　"
+                f"面积口径：检测掩码（人工修正的用人工轮廓）",
+                f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"]
+
+    def export_summary_sheet(self):
+        """导出"所有图纵向堆叠"的汇总大图，顶部带汇总统计"""
+        if not self.batch_results:
+            QMessageBox.information(self, "提示", "请先完成批量检测")
+            return
+        if not any(r.get('ok') for r in self.batch_results):
+            QMessageBox.warning(self, "提示", "没有可导出的成功结果")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出汇总大图",
+            f"空洞汇总_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+            "PNG 图片 (*.png)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            entries = []
+            for i, r in enumerate(self.batch_results):
+                img, res = self._rerun_result(i)
+                if img is None or res is None:
+                    continue
+                lines = [f"[{i + 1}] "] + self._annotated_lines(r, res)
+                entries.append({
+                    'img': img, 'band_mask': res['band_mask'],
+                    'voids': res['voids'], 'lines': lines,
+                    'warn': bool(r.get('warnings')) or not r.get('ok'),
+                })
+            sheet = render_summary_sheet(entries, self._summary_lines(for_sheet=True),
+                                         sheet_width=1600)
+            if sheet is None:
+                QMessageBox.warning(self, "提示", "汇总图生成失败")
+                return
+            if not self._save_png(path, sheet):
+                QMessageBox.warning(self, "错误", "汇总大图写入失败或校验不通过")
+                return
+        finally:
+            QApplication.restoreOverrideCursor()
+        QMessageBox.information(
+            self, "完成",
+            f"已导出汇总大图（{sheet.shape[1]}×{sheet.shape[0]}）：\n"
+            f"{path if path.lower().endswith('.png') else path + '.png'}")
 
     def export_csv(self):
         if not self.batch_results:
@@ -1049,6 +1503,10 @@ class TeachBatchTab(QWidget):
                     '空洞面积(px²)': round(r['void_area_px'], 1),
                     '空洞率(%)': round(r['void_rate'] * 100, 3),
                     't_空洞': round(r.get('t_void_used', 0), 1),
+                    '空洞面积下限(px²)': r.get('min_area_used', ''),
+                    '空洞面积上限(px²)': r.get('max_area_used', ''),
+                    '未计入大暗斑数': r.get('above_max_area_count', 0),
+                    '未计入小暗斑数': r.get('below_min_area_count', 0),
                     '比例尺识别': '是' if r.get('bar_found') else '否(用示范值)',
                     '厚度过滤剔除(%)': round(
                         (r.get('diagnostics') or {}).get('thin_removed_frac', 0) * 100, 3),
@@ -1123,6 +1581,7 @@ class TeachBatchTab(QWidget):
         r = self.batch_results[row]
         self.preview_row = row
         self.table.selectRow(row)
+        self._mark_thumb_selected(row)
         self._reset_edit_modes()
         if not r.get('ok'):
             self.lbl_preview.setText(
@@ -1201,6 +1660,12 @@ class TeachBatchTab(QWidget):
         if dev:
             parts.append(f"vs示教: 偏移{dev['center_shift'] * 100:.0f}% "
                          f"面积×{dev['area_ratio']:.2f} 长宽×{dev['aspect_ratio']:.2f}")
+        below = r.get('below_min_area_count') or 0
+        above = r.get('above_max_area_count') or 0
+        if below:
+            parts.append(f"另有 {below} 个小暗斑未计入(<{r.get('min_area_used')}px²)")
+        if above:
+            parts.append(f"另有 {above} 个大暗斑未计入(>{r.get('max_area_used')}px²)")
         warn = '；'.join(r.get('warnings') or [])
         if warn:
             parts.append(f"⚠ {warn}")
@@ -1424,52 +1889,67 @@ class TeachBatchTab(QWidget):
             self.table.setItem(row, c, it)
 
     def _update_summary(self):
-        ok = [r for r in self.batch_results if r.get('ok') and r.get('solder_area_px')]
-        if not ok:
+        lines = self._summary_lines()
+        if not lines:
             return
-        tot_solder = sum(r['solder_area_px'] for r in ok)
-        tot_void = sum(r['void_area_px'] for r in ok)
-        total_rate = tot_void / tot_solder * 100 if tot_solder else 0.0
-        rates = [r['void_rate'] * 100 for r in ok]
-        self.lbl_total.setText(f"总空洞率: {total_rate:.2f}%")
-        self.lbl_stats.setText(
-            f"块均值: {float(np.mean(rates)):.2f}% ± {float(np.std(rates)):.2f}   "
-            f"最小 {min(rates):.2f}% ~ 最大 {max(rates):.2f}%   "
-            f"异常 {len(self.batch_results) - len(ok)} 张"
-            + (f"   人工修正 {len(self.result_edits)} 张" if self.result_edits else ""))
+        # 第一行拆开：大字只放"总空洞率"，其余小字放右侧（3 行，不换行错乱）
+        head = lines[0].split('　', 1)
+        self.lbl_total.setText(head[0])
+        rest = (head[1] + '\n' if len(head) > 1 else '')
+        self.lbl_stats.setText(rest + '\n'.join(lines[1:3]))
 
     @staticmethod
     def _save_png(path, img_bgr):
-        """写 PNG（绕开 cv2.imwrite 不支持中文路径的问题）"""
-        ok, buf = cv2.imencode('.png', img_bgr)
+        """写 PNG 并回读校验（绕开 cv2.imwrite 中文路径问题）
+
+        "另存为"对话框不会自动补扩展名：用户输入不带 .png 时，Qt 会照原样
+        存成一个无扩展名文件，Windows 便当作未知/损坏文件。这里统一补上，
+        写完再回读一次确认是有效 PNG，避免交付"打不开的图"。
+        """
+        if img_bgr is None or getattr(img_bgr, 'size', 0) == 0:
+            return False
+        if img_bgr.ndim == 2:
+            img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+        root, ext = os.path.splitext(path)
+        if ext.lower() not in ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'):
+            path = path + '.png'
+        ok, buf = cv2.imencode(os.path.splitext(path)[1].lower() or '.png', img_bgr)
         if not ok:
             return False
         with open(path, 'wb') as f:
             f.write(buf.tobytes())
+        # 回读校验：确认能解码、尺寸一致
+        try:
+            back = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        except Exception:
+            return False
+        if back is None:
+            return False
         return True
 
     @staticmethod
     def _annotated_lines(r, res):
-        """标注图左上角文字行"""
+        """标注图左上角文字行（中文，供单图标注与汇总大图共用）"""
         px_um = r.get('px_per_um_used') or 0.0
         area_um = (res['solder_area_px'] / (px_um ** 2)) if px_um > 0 else 0.0
         lines = [
             str(r.get('filename', '')),
-            f"void_rate={res['void_rate'] * 100:.2f}%  voids={res['void_count']}  "
-            f"solder={res['solder_area_px']}px2"
-            + (f" ({area_um:.0f}um2)" if area_um > 0 else ""),
-            f"t_void={res.get('t_void_used', 0):.0f}  "
-            f"scale={'auto' if r.get('bar_found') else 'taught'}"
-            + (f"  [EDIT:{r.get('caliber')}]" if r.get('edited') else ""),
+            f"空洞率 {res['void_rate'] * 100:.2f}%　空洞 {res['void_count']} 个　"
+            f"金锡 {res['solder_area_px']}px²"
+            + (f"（{area_um:.0f}μm²）" if area_um > 0 else ""),
+            f"t_空洞={res.get('t_void_used', 0):.0f}　"
+            f"面积区间 {res.get('min_area_used', '—')}~{res.get('max_area_used', '—')}px²　"
+            f"比例尺={'自动' if r.get('bar_found') else '示范值'}"
+            + (f"　【面积口径：{r.get('caliber')}】" if r.get('edited') else ""),
         ]
         dev = r.get('deviation')
         if dev:
             lines.append(
-                f"vs taught: center={dev['center_shift'] * 100:.0f}%  "
-                f"area x{dev['area_ratio']:.2f}  aspect x{dev['aspect_ratio']:.2f}")
-        warn = '; '.join(r.get('warnings') or [])
+                f"vs 示教：偏移 {dev['center_shift'] * 100:.0f}%　"
+                f"面积 ×{dev['area_ratio']:.2f}　长宽比 ×{dev['aspect_ratio']:.2f}")
+        warn = '；'.join(r.get('warnings') or [])
         if warn:
-            lines.append(f"warn: {warn}")
+            lines.append(f"警告：{warn}")
         return lines
 
     def export_annotated_current(self):

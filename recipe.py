@@ -255,14 +255,13 @@ def validate_taught(model):
     t_void = void.get('threshold')
     if t_void is not None:
         t_void = _clamp(t_void, 0, 255, None)
-    max_area = void.get('max_area')
-    try:
-        max_area = int(max_area) if max_area and int(max_area) > 0 else None
-    except (TypeError, ValueError):
-        max_area = None
+    # schema < 3 的旧配方：面积上下限是"按点选尺寸"推出来的（会把最小的和
+    # 最大的空洞分别排除），一律迁移为自动档，旧值保留到 *_taught 供追溯
+    legacy = int(model.get('schema_version') or 1) < 3
+    lv = void
 
     return {
-        'schema_version': 2,
+        'schema_version': 3,
         'type': 'taught',
         'name': (model.get('name') or '').strip(),
         'note': model.get('note') or '',
@@ -280,9 +279,18 @@ def validate_taught(model):
         },
         'void': {
             'threshold': t_void,
-            'min_area': max(0, int(_clamp(void.get('min_area'), 0, 10 ** 7, 1))),
-            'max_area': max_area,
+            # 面积上下限：0/None = 自动（下限按带面积 0.02%、下限 12px²；
+            # 上限按带面积 30%，仅作分割失败兜底）；>0 = 手动
+            'min_area': max(0, int(lv.get('min_area', 0) or 0)),
+            'min_area_taught': max(1, int(lv.get('min_area_taught')
+                                         or lv.get('min_area') or 4)),
+            'max_area': (int(lv['max_area']) if (not legacy and lv.get('max_area'))
+                         else None),
+            'max_area_taught': (int(lv.get('max_area_taught')
+                                    or lv.get('max_area') or 0) or None),
             'min_roundness': _clamp(void.get('min_roundness'), 0, 1, 0.0),
+            # 深度容差（灰阶偏移）：正值更包容，把偏浅的暗斑也算作空洞
+            'depth_offset': _clamp(void.get('depth_offset'), -80.0, 80.0, 0.0),
             'taught_count': max(0, int(_clamp(void.get('taught_count'), 0, 9999, 0))),
             'median': _clamp(void.get('median'), 0, 255, None) if void.get('median') is not None else None,
         },
