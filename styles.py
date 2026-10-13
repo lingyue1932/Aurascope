@@ -93,10 +93,10 @@ QPushButton#PrimaryBtn {
     color: white;
     border: none;
     border-radius: 6px;
-    padding: 14px 20px;
+    padding: 10px 16px;
     font-weight: 600;
     font-size: 15px;
-    min-height: 20px;
+    min-height: 16px;
 }
 QPushButton#PrimaryBtn:hover {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,

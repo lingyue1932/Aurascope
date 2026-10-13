@@ -26,12 +26,12 @@ class LearnReportDialog(QDialog):
         lo.setContentsMargins(16, 16, 16, 16)
         lo.setSpacing(10)
 
-        head = QLabel("学习做完了哪些事、得到了什么参数")
-        head.setStyleSheet("font-size: 15px; font-weight: 600; color: #2d3748;")
-        lo.addWidget(head)
-        lo.addWidget(create_info_label(
-            "下面每一块都对应检测时真正用到的参数。若某一项明显不对，"
-            "回到对应步骤调整后重新学习。"))
+        # head = QLabel("学习做完了哪些事、得到了什么参数")
+        # head.setStyleSheet("font-size: 15px; font-weight: 600; color: #2d3748;")
+        # lo.addWidget(head)
+        # lo.addWidget(create_info_label(
+        #     "下面每一块都对应检测时真正用到的参数。若某一项明显不对，"
+        #     "回到对应步骤调整后重新学习。"))
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -99,24 +99,24 @@ def build_learn_items(model, extra=None):
     px_um = model.get('px_per_um') or 0.0
     n_marks = void.get('taught_count') or 0
 
-    items.append(("① 示范区域统计", [
+    items.append(("示范区域统计", [
         f"示范区域灰度：中位 {sol.get('median')}，主要范围 {sol.get('p5')} ~ {sol.get('p95')}"
         f"（标准差 {sol.get('std')}）",
-        "焊层类取自示范区域内的「灰度主峰核」——比「取亮半边」更抗邻层污染",
+        # "焊层类取自示范区域内的「灰度主峰核」——比「取亮半边」更抗邻层污染",
     ], 'info'))
 
     sep = diag.get('solder_bg_separability')
-    rows = [f"焊层阈值 t_焊层 = {sol.get('threshold')}（低于它的像素不算焊料）",
+    rows = [f"焊层阈值 t_焊层 = {sol.get('threshold')}",
             f"对比背景类：中位 {bg.get('median')}，主要范围 {bg.get('p5')} ~ {bg.get('p95')}",
-            f"两类可分性 = {sep}（<1.5 说明示范不够典型，建议重画区域或补点空洞）"]
+            f"两类可分性 = {sep}（<1.5 示范不够典型，建议重画区域或补点空洞）"]
     sf = diag.get('bg_same_gray_frac') or 0
     if sf > 0.2:
         rows.append(f"⚠ 周边有 {sf * 100:.0f}% 的像素与焊料同灰度，已自动剔除"
                     f"（这类像素若混进背景类会把阈值推高）")
-    items.append(("② 焊层 / 背景两类分离",
+    items.append(("焊层 / 背景两类分离",
                   rows, 'warn' if (sep is not None and sep < 1.5) else 'ok'))
 
-    items.append(("③ 空洞类（来自你点选的典型空洞）", [
+    items.append(("空洞（来自你点选的典型空洞）", [
         f"点选 {n_marks} 个；点选面积范围 "
         f"{min([void.get('min_area_taught', 0)] if n_marks else [0])} ~ "
         f"{void.get('max_area') or '—'} px²（仅供参考，不再作为检测下限）",
@@ -126,26 +126,26 @@ def build_learn_items(model, extra=None):
     ], 'ok' if void.get('threshold') is not None else 'warn'))
 
     if geom:
-        items.append(("④ 几何基准（用于批量时与示教模板比对）", [
+        items.append(("几何基准（用于批量时与示教模板比对）", [
             f"归一化中心 ({geom.get('cx_norm')}, {geom.get('cy_norm')})，"
             f"宽高占比 {geom.get('w_norm')} × {geom.get('h_norm')}",
             f"面积占比 {geom.get('area_frac')}，长宽比 {geom.get('aspect')}",
-            "批量时若某张图与它的偏差超阈值（位置 15%/面积 0.4~2.5 倍/长宽比 0.5~2.0），"
-            "会在结果里告警——通常意味着那批图需要单独示教",
+            # "批量时若某张图与它的偏差超阈值（位置 15%/面积 0.4~2.5 倍/长宽比 0.5~2.0），"
+            # "会在结果里告警——通常意味着那批图需要单独示教",
         ], 'ok'))
 
-    items.append(("⑤ 比例尺", [
+    items.append(("比例尺", [
         f"px/μm = {px_um:.2f}" if px_um > 0 else
-        "未标定——仍然可以用像素平方出结果，只是没有 μm² 换算",
+        "未标定——仍然可以用像素平方出结果，无实际面积换算",
     ], 'ok' if px_um > 0 else 'info'))
 
-    items.append(("⑥ 检测细节参数", [
+    items.append(("检测细节参数", [
         f"最小宽度过滤 {band_cfg.get('min_thickness_px')} px"
         f"（剔除界面薄滴/毛刺，0 = 关闭）",
         f"贴边空洞缺口桥接：" + ("自动" if int(band_cfg.get('bridge_win_px', -1)) < 0
                                   else ("关闭" if int(band_cfg.get('bridge_win_px', -1)) == 0
                                         else f"窗口 {band_cfg.get('bridge_win_px')} px")),
-        "批量时可再选「灵敏度」档位微调（标准 / 高灵敏）",
+        # "批量时可再选「灵敏度」档位微调（标准 / 高灵敏）",
     ], 'info'))
 
     if extra:
