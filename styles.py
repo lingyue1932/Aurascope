@@ -357,6 +357,18 @@ QCheckBox::indicator:checked {
     background: #4299e1;
     border-color: #4299e1;
 }
+QSplitter::handle:horizontal {
+    background: #dbe3ec;
+    width: 6px;
+    margin: 8px 2px;
+    border-radius: 3px;
+}
+QSplitter::handle:horizontal:hover {
+    background: #94a3b8;
+}
+QSplitter::handle:horizontal:pressed {
+    background: #64748b;
+}
 """
 
 # 对话框样式

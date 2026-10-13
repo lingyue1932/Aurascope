@@ -21,6 +21,7 @@ class ImageCanvas(QWidget):
     void_local_region_confirmed = pyqtSignal(float, float, float)  # cx, cy, radius
     void_local_threshold_changed = pyqtSignal(int, int)  # region_index, new_thresh
     void_local_region_removed = pyqtSignal(int)  # region_index
+    teach_void_at = pyqtSignal(float, float)     # 示教点选空洞（图像坐标）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,6 +83,8 @@ class ImageCanvas(QWidget):
         self.lb_confirmed = []          # [{'cx','cy','radius','thresh'}, ...]
         self.void_rate_text = ""        # 空洞率文字，显示在图像右上角
         self.hovered_void_id = -1       # 删除模式下悬停的空洞ID，用于高亮预览
+        self.hovered_vertex_idx = -1    # 编辑态下光标最近的顶点（按需显示手柄）
+        self.teach_void_mode = False    # 示教模式：左键点选空洞
 
     def set_void_edit_mode(self, mode):
         self.void_edit_mode = mode
@@ -102,6 +105,13 @@ class ImageCanvas(QWidget):
     def set_local_brush_regions(self, regions):
         """从主窗口同步已确认区域列表（含阈值）用于渲染"""
         self.lb_confirmed = list(regions)
+        self.update()
+
+    def set_teach_void_mode(self, enabled):
+        """示教点选模式：左键点击直接发射信号，不进其他交互分支"""
+        self.teach_void_mode = bool(enabled)
+        if self.teach_void_mode:
+            self.void_edit_mode = 'none'
         self.update()
 
     def set_image(self, img_cv):
@@ -164,6 +174,7 @@ class ImageCanvas(QWidget):
         if not self.roi_edit_enabled:
             self.selected_vertex_idx = -1
             self.active_edge_idx = -1
+            self.hovered_vertex_idx = -1
             self.drag_kind = None
         self.update()
 
@@ -338,8 +349,12 @@ class ImageCanvas(QWidget):
         pos_img = self.widget_to_img(pos_widget)
 
         if event.button() == Qt.MouseButton.LeftButton:
-            
-            
+
+            # 示教点选模式优先级最高：点击即发射，不进任何其他交互分支
+            if self.teach_void_mode:
+                self.teach_void_at.emit(float(pos_img.x()), float(pos_img.y()))
+                return
+
             if self.void_edit_mode == 'delete':
                 self.void_delete_at.emit(float(pos_img.x()), float(pos_img.y()))
                 self.hovered_void_id = -1
@@ -466,6 +481,19 @@ class ImageCanvas(QWidget):
                 self.roi_rect_changed.emit(self.current_rect)
                 self.update()
 
+        # 编辑态：跟踪光标最近的顶点，用于"按需显示"手柄（只高亮最近的那个）
+        if (self.roi_edit_enabled and not self.is_dragging
+                and not (event.buttons() & Qt.MouseButton.RightButton)
+                and len(self.roi_polygon_points) >= 3):
+            idx = self._closest_vertex_index(pos_img)
+            if idx != self.hovered_vertex_idx:
+                self.hovered_vertex_idx = idx
+                self.update()
+            if idx >= 0:
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
         if event.buttons() & Qt.MouseButton.RightButton:
             delta = pos_widget - self.last_mouse_pos
             self.offset += delta
@@ -509,6 +537,21 @@ class ImageCanvas(QWidget):
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def mouseDoubleClickEvent(self, event):
+        # 双击 ROI 边：在该处插入顶点（配合拖拽顶点 / Delete 删除，实现增删顶点）
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self.roi_edit_enabled and len(self.roi_polygon_points) >= 3
+                and self.void_edit_mode == 'none' and not self.teach_void_mode):
+            pos_img = self.widget_to_img(event.position())
+            e_idx = self._closest_edge_index(pos_img)
+            if e_idx >= 0:
+                self.roi_polygon_points.insert(e_idx + 1, pos_img)
+                self.selected_vertex_idx = e_idx + 1
+                self.active_edge_idx = -1
+                self.is_dragging = False
+                self._emit_roi_polygon_edited()
+                self.update()
+                return
+
         if event.button() == Qt.MouseButton.LeftButton and self.void_edit_mode == 'add':
             if self.void_add_preview:
                 pts = self.void_add_preview['points']
@@ -701,14 +744,23 @@ class ImageCanvas(QWidget):
                     painter.setPen(QPen(QColor(66, 153, 225), 2.0 / self.scale))
                 painter.drawLine(p0, p1)
 
-            rad = 4.0 / self.scale
-            for i, pt in enumerate(self.roi_polygon_points):
-                if i == self.selected_vertex_idx:
-                    painter.setBrush(QColor(245, 64, 64))
-                else:
-                    painter.setBrush(QColor(56, 189, 248))
-                painter.setPen(QPen(QColor(255, 255, 255), 1.0 / self.scale))
-                painter.drawEllipse(pt, rad, rad)
+            # 顶点手柄按需显示：只在编辑态画，且只画"光标最近的"和"已选中的"两个。
+            # 焊层带边界常有上百个顶点（界面过渡带起伏是真实几何），全画会挤成一片
+            # 既挡住图像又抓不住想拖的那个点。
+            if self.roi_edit_enabled:
+                rad = 4.5 / self.scale
+                marks = {self.selected_vertex_idx, self.hovered_vertex_idx}
+                for i in marks:
+                    if 0 <= i < len(self.roi_polygon_points):
+                        pt = self.roi_polygon_points[i]
+                        if i == self.hovered_vertex_idx:
+                            painter.setBrush(QColor(245, 64, 64))
+                            painter.setPen(QPen(QColor(255, 255, 255), 1.4 / self.scale))
+                            painter.drawEllipse(pt, rad * 1.25, rad * 1.25)
+                        else:
+                            painter.setBrush(QColor(56, 189, 248))
+                            painter.setPen(QPen(QColor(255, 255, 255), 1.0 / self.scale))
+                            painter.drawEllipse(pt, rad, rad)
 
         if self.void_edit_mode == 'add' and self.void_add_preview and len(self.void_add_preview.get('points', [])) >= 3:
             pts_q = [QPointF(p[0], p[1]) for p in self.void_add_preview['points']]

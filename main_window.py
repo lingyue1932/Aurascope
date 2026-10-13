@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QHeaderView, QDialog, QInputDialog, QFrame,
                              QMessageBox, QScrollArea, QSizePolicy,
                              QGraphicsDropShadowEffect, QLabel, QPushButton, QSlider,
-                             QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter)
+                             QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter,
+                             QComboBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QIcon, QColor, QPixmap, QShortcut, QKeySequence
 from PyQt6.QtWidgets import QApplication
@@ -32,6 +33,9 @@ from measure_tab import MeasureTab
 from shear_tab import ShearTab
 from counting_tab import CountingTab
 from stitching_tab import StitchingTab
+from teach_batch_tab import TeachBatchTab
+from recipe import (list_recipes, load_recipe, save_recipe,
+                    delete_recipe, build_recipe)
 
 
 class MainWindow(QMainWindow):
@@ -57,6 +61,12 @@ class MainWindow(QMainWindow):
         self.snap_edge_mask = None
         self.void_edit_mode = 'none'
         self.roi_erosion_px = 3
+
+        # 检测配方
+        self.current_recipe_name = None
+
+        # 一键自动 ROI（框选完成后自动走 Otsu + 轮廓提取）
+        self.auto_roi_pending = False
 
         self.init_ui()
 
@@ -84,6 +94,10 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
         self.tab_widget.addTab(analysis_tab, "    空洞分析    ")
+
+        # Tab 1.5: 示教与批量检测
+        self.teach_batch_tab = TeachBatchTab()
+        self.tab_widget.addTab(self.teach_batch_tab, "    示教/批量    ")
 
         # Tab 2: 距离测量
         self.measure_tab = MeasureTab()
@@ -178,6 +192,26 @@ class MainWindow(QMainWindow):
         btn_load = create_primary_button("点击上传 SEM 图片", self.load_image)
         layout.addWidget(btn_load)
 
+        # ── 检测配方 ──
+        layout.addWidget(create_step_title("检测配方"))
+        recipe_row = QHBoxLayout()
+        self.combo_recipe = QComboBox()
+        self.combo_recipe.setMinimumWidth(110)
+        self.combo_recipe.setToolTip("已保存的检测参数 + 焊层 ROI 配方")
+        recipe_row.addWidget(self.combo_recipe, 1)
+        self.btn_load_recipe = create_success_button("加载", self.on_load_recipe)
+        recipe_row.addWidget(self.btn_load_recipe)
+        layout.addLayout(recipe_row)
+
+        recipe_row2 = QHBoxLayout()
+        self.btn_save_recipe = create_secondary_button("保存为配方", self.on_save_recipe)
+        recipe_row2.addWidget(self.btn_save_recipe, 1)
+        self.btn_del_recipe = create_danger_button("删除", self.on_delete_recipe)
+        recipe_row2.addWidget(self.btn_del_recipe)
+        layout.addLayout(recipe_row2)
+
+        self._refresh_recipe_combo()
+
         # ── 标定 ──
         layout.addWidget(create_step_title("比例尺标定"))
         self.btn_calib = create_secondary_button("划线标定", self.start_calibration, checkable=True)
@@ -229,6 +263,15 @@ class MainWindow(QMainWindow):
         """设置缺陷区域识别阈值组"""
         vbox = QVBoxLayout()
 
+        # 区域阈值标题行 + 自动 Otsu
+        layer_header = QHBoxLayout()
+        layer_header.addWidget(QLabel("区域阈值:"))
+        layer_header.addStretch()
+        btn_layer_otsu = create_secondary_button("自动 (Otsu)", self.auto_layer_otsu)
+        btn_layer_otsu.setToolTip("对当前矩形框选区域自动计算识别阈值")
+        layer_header.addWidget(btn_layer_otsu)
+        vbox.addLayout(layer_header)
+
         self.slider_layer, self.lbl_layer_val = create_slider_with_label(
             0, 255, 100, self.update_layer_preview)
 
@@ -243,6 +286,16 @@ class MainWindow(QMainWindow):
         tool_row.addWidget(self.btn_rect)
         vbox.addWidget(btn_confirm)
         vbox.addWidget(btn_reset)
+
+        # 一键自动 ROI
+        self.btn_auto_roi = create_primary_button("一键自动 ROI", self.start_auto_roi)
+        self.btn_auto_roi.setToolTip("在图上拖出焊料大致区域，自动提取边界多边形，之后可微调顶点")
+        vbox.addWidget(self.btn_auto_roi)
+        self.lbl_auto_roi_tip = QLabel("请在图上拖出焊料大致区域")
+        self.lbl_auto_roi_tip.setWordWrap(True)
+        self.lbl_auto_roi_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        self.lbl_auto_roi_tip.setVisible(False)
+        vbox.addWidget(self.lbl_auto_roi_tip)
 
         # 高级选项
         adv = CollapsibleSection("多边形编辑")
@@ -422,6 +475,7 @@ class MainWindow(QMainWindow):
         self.btn_calib.setEnabled(enabled)
         self.btn_poly.setEnabled(enabled)
         self.btn_rect.setEnabled(enabled)
+        self.btn_auto_roi.setEnabled(enabled)
         self.grp_void.setEnabled(enabled)
 
     # ========== 图片加载 ==========
@@ -449,6 +503,7 @@ class MainWindow(QMainWindow):
         self.toggle_steps(True)
         self.btn_poly.setEnabled(False)
         self.btn_rect.setEnabled(False)
+        self.btn_auto_roi.setEnabled(False)
         self.grp_void.setEnabled(False)
         
         self.btn_calib.setChecked(False)
@@ -540,6 +595,7 @@ class MainWindow(QMainWindow):
         self.toggle_steps(True)
         self.btn_poly.setEnabled(True)
         self.btn_rect.setEnabled(True)
+        self.btn_auto_roi.setEnabled(True)
         self.grp_void.setEnabled(False)
         
         self.btn_calib.setChecked(False)
@@ -587,6 +643,7 @@ class MainWindow(QMainWindow):
                 self.canvas.update()
                 self.btn_poly.setEnabled(True)
                 self.btn_rect.setEnabled(True)
+                self.btn_auto_roi.setEnabled(True)
 
     # ========== 焊层定义 ==========
     def set_tool_mode(self, mode):
@@ -624,6 +681,11 @@ class MainWindow(QMainWindow):
 
     def prepare_layer_threshold(self, rect_tuple):
         """准备矩形阈值调整"""
+        # 一键自动 ROI 的框选完成事件：走自动提取流程
+        if getattr(self, 'auto_roi_pending', False):
+            self._apply_auto_roi(rect_tuple)
+            return
+
         self.grp_layer_thresh.setVisible(True)
         self.canvas.mode = 'rect'
         self.canvas.current_rect = rect_tuple
@@ -681,10 +743,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, '提示', '边界多边形生成失败。')
             return
 
-        self.roi_polygon_pts = polygon
+        self._apply_polygon_roi(polygon, rect_info, local_mask, layer_thresh=val)
+
+    def _apply_polygon_roi(self, polygon, rect_info, local_mask, layer_thresh=None):
+        """应用多边形 ROI（手动确认与一键自动 ROI 共用）"""
+        self.roi_polygon_pts = [(float(px), float(py)) for px, py in polygon]
         self.roi_mask = polygon_to_mask(self.roi_polygon_pts, self.canvas.img_cv.shape)
-        self.snap_edge_mask = build_snap_edge_mask(rect_info, local_mask, self.canvas.img_cv.shape)
-        
+        if rect_info is not None and local_mask is not None:
+            self.snap_edge_mask = build_snap_edge_mask(
+                rect_info, local_mask, self.canvas.img_cv.shape)
+        else:
+            self.snap_edge_mask = None
+
         self.canvas.set_edge_snap_mask(self.snap_edge_mask)
         self.canvas.set_snap_enabled(self.chk_snap_edge.isChecked())
         self.canvas.set_roi_polygon(self.roi_polygon_pts)
@@ -694,8 +764,289 @@ class MainWindow(QMainWindow):
         self.canvas.current_rect = None
         self.canvas.overlay_preview = None
         self.btn_rect.setChecked(False)
+        self.btn_poly.setChecked(False)
+
+        if layer_thresh is not None:
+            self.slider_layer.setValue(int(layer_thresh))
+            self.lbl_layer_val.setText(str(int(layer_thresh)))
 
         self.finalize_roi()
+
+    # ========== 一键自动 ROI ==========
+
+    def start_auto_roi(self):
+        """进入一键自动 ROI 的框选状态"""
+        if self.canvas.img_cv is None:
+            QMessageBox.information(self, '提示', '请先上传图片')
+            return
+        self.auto_roi_pending = True
+        self.lbl_auto_roi_tip.setVisible(True)
+        self.set_tool_mode('rect')
+
+    def auto_layer_otsu(self):
+        """对矩形框选区域自动计算识别阈值"""
+        rect = getattr(self.canvas, 'current_rect', None)
+        if not rect:
+            QMessageBox.information(self, '提示', '请先用「矩形框+阈值」在图上框选一个区域')
+            return
+        if self.canvas.img_cv is None:
+            return
+        if len(self.canvas.img_cv.shape) == 2:
+            gray = self.canvas.img_cv
+        else:
+            gray = cv2.cvtColor(self.canvas.img_cv, cv2.COLOR_BGR2GRAY)
+        x, y, w, h = [int(v) for v in rect]
+        ih, iw = gray.shape
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(iw, x + w), min(ih, y + h)
+        if x2 - x1 < 3 or y2 - y1 < 3:
+            return
+        thresh = otsu_threshold(gray[y1:y2, x1:x2])
+        self.slider_layer.setValue(thresh)   # 触发 update_layer_preview
+
+    def _apply_auto_roi(self, rect_tuple):
+        """一键自动 ROI：Otsu 阈值 → 轮廓提取 → 多边形化 → 顶点微调"""
+        self.auto_roi_pending = False
+        self.lbl_auto_roi_tip.setVisible(False)
+        if self.canvas.img_cv is None:
+            return
+
+        x, y, w, h = [int(v) for v in rect_tuple]
+        ih, iw = self.canvas.img_cv.shape[:2]
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(iw, x + w), min(ih, y + h)
+        if x2 - x1 < 5 or y2 - y1 < 5:
+            QMessageBox.warning(self, '提示', '框选区域过小，请重新框选')
+            return
+
+        if len(self.canvas.img_cv.shape) == 2:
+            gray = self.canvas.img_cv
+        else:
+            gray = cv2.cvtColor(self.canvas.img_cv, cv2.COLOR_BGR2GRAY)
+        thresh = otsu_threshold(gray[y1:y2, x1:x2])
+
+        rect_info, local_mask, contour = extract_threshold_contour(
+            self.canvas.img_cv, (x, y, w, h), thresh)
+        if contour is None:
+            self._auto_roi_fallback((x, y, w, h), '未识别到焊层边界，已切回手动模式')
+            return
+
+        # 合理性检查：轮廓面积占框选面积的比例，防止框选偏斜导致识别结果无意义
+        rect_area = (x2 - x1) * (y2 - y1)
+        cnt_area = cv2.contourArea(contour)
+        if cnt_area < 0.01 * rect_area or cnt_area > 0.98 * rect_area:
+            self._auto_roi_fallback(
+                (x, y, w, h),
+                '自动识别结果异常（选区占比过小或接近满区），已切回手动模式')
+            return
+
+        polygon = contour_to_polygon(contour, self.slider_vertices.value())
+        if len(polygon) < 3:
+            self._auto_roi_fallback((x, y, w, h), '边界多边形生成失败，已切回手动模式')
+            return
+
+        self._apply_polygon_roi(polygon, rect_info, local_mask, layer_thresh=thresh)
+
+    def _auto_roi_fallback(self, rect_tuple, msg):
+        """自动识别失败时退回手动阈值模式（保留框选，用户自行调阈值）"""
+        QMessageBox.warning(self, '提示', msg)
+        self.prepare_layer_threshold(rect_tuple)
+
+    # ========== 检测配方 ==========
+
+    def _refresh_recipe_combo(self):
+        """刷新配方下拉列表，尽量保持原选中项
+
+        只列参数型（v1）配方；示教模型归「示教/批量」Tab 管理。
+        """
+        if not hasattr(self, 'combo_recipe'):
+            return
+        current = self.combo_recipe.currentData()
+        self.combo_recipe.blockSignals(True)
+        self.combo_recipe.clear()
+        for disp, fn in list_recipes(kind='v1'):
+            self.combo_recipe.addItem(disp, fn)
+        if current:
+            idx = self.combo_recipe.findData(current)
+            if idx >= 0:
+                self.combo_recipe.setCurrentIndex(idx)
+        self.combo_recipe.blockSignals(False)
+
+        has_recipes = self.combo_recipe.count() > 0
+        self.btn_load_recipe.setEnabled(has_recipes)
+        self.btn_del_recipe.setEnabled(has_recipes)
+
+    def _capture_detection_params(self):
+        """从当前 UI 捕获检测参数"""
+        max_v = self.spin_max_area.value()
+        return {
+            'threshold': self.slider_void.value(),
+            'min_area': self.spin_min_area.value(),
+            'max_area': max_v if max_v > 0 else None,
+            'roi_erosion_px': self.spin_erosion.value(),
+            'enhanced': self.chk_enhanced.isChecked(),
+            'clahe_enabled': self.chk_clahe.isChecked(),
+            'clahe_clip_limit': self.slider_clahe_clip.value() / 10.0,
+            'morph_enabled': self.chk_morph.isChecked(),
+            'morph_kernel': 3,       # UI 未暴露，固定默认值
+            'min_roundness': self.spin_roundness.value(),
+            'edge_verify': self.chk_edge.isChecked(),
+            'edge_thresh': 0.3,      # UI 未暴露，固定默认值
+        }
+
+    def on_save_recipe(self):
+        """保存当前检测参数 + ROI 为配方"""
+        if self.canvas.img_cv is None:
+            QMessageBox.information(self, '提示', '请先上传图片')
+            return
+        if len(self.roi_polygon_pts) < 3:
+            QMessageBox.information(
+                self, '提示',
+                '请先定义焊层 ROI（多边形框选 / 矩形框+阈值 / 一键自动 ROI）')
+            return
+
+        name, ok = QInputDialog.getText(
+            self, '保存配方', '配方名称:', text=self.current_recipe_name or '')
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            QMessageBox.warning(self, '提示', '配方名称不能为空')
+            return
+
+        detection = self._capture_detection_params()
+        roi = {
+            'polygon': [[round(x, 1), round(y, 1)] for x, y in self.roi_polygon_pts],
+            'layer_threshold': self.slider_layer.value(),
+            'vertices': self.slider_vertices.value(),
+        }
+        try:
+            save_recipe(build_recipe(name, detection, roi,
+                                     px_per_um=self.pixel_scale))
+        except Exception as e:
+            QMessageBox.warning(self, '错误', f'配方保存失败: {e}')
+            return
+
+        self.current_recipe_name = name
+        self._refresh_recipe_combo()
+        idx = self.combo_recipe.findText(name)
+        if idx >= 0:
+            self.combo_recipe.setCurrentIndex(idx)
+        QMessageBox.information(self, '成功', f"配方「{name}」已保存")
+
+    def on_load_recipe(self):
+        """加载配方并应用到当前图片"""
+        if self.canvas.img_cv is None:
+            QMessageBox.information(self, '提示', '请先上传图片')
+            return
+        fn = self.combo_recipe.currentData()
+        if not fn:
+            return
+        data = load_recipe(fn)
+        if data is None:
+            QMessageBox.warning(self, '错误', '配方读取失败或文件已损坏')
+            self._refresh_recipe_combo()
+            return
+        self._apply_recipe(data)
+        self.current_recipe_name = data.get('name') or ''
+        QMessageBox.information(
+            self, '成功', f"已加载配方「{self.current_recipe_name}」\n"
+                          f"（ROI 顶点仍可手动微调）")
+
+    def _apply_recipe(self, data):
+        """把配方应用到当前图片与 UI"""
+        det = data.get('detection') or {}
+        roi = data.get('roi') or {}
+
+        # 1. ROI（finalize_roi 内部会跑一次 Otsu，配方阈值在第 3 步覆盖回来）
+        poly = roi.get('polygon') or []
+        if len(poly) >= 3 and self.canvas.img_cv is not None:
+            h, w = self.canvas.img_cv.shape[:2]
+            pts = []
+            for p in poly:
+                x = min(max(float(p[0]), 0), w - 1)
+                y = min(max(float(p[1]), 0), h - 1)
+                pts.append((x, y))
+            if len(pts) >= 3:
+                self.roi_polygon_pts = pts
+                self.roi_mask = polygon_to_mask(self.roi_polygon_pts,
+                                                self.canvas.img_cv.shape)
+                self.canvas.set_roi_polygon(self.roi_polygon_pts)
+                self.canvas.set_roi_edit_enabled(True)
+                self.canvas.set_edge_snap_mask(None)
+                self.canvas.set_snap_enabled(self.chk_snap_edge.isChecked())
+                self.canvas.mode = 'none'
+                self.canvas.current_rect = None
+                self.canvas.overlay_preview = None
+                self.btn_rect.setChecked(False)
+                self.btn_poly.setChecked(False)
+                self.finalize_roi()
+
+        # 2. 检测参数（blockSignals，避免中间态重复计算）
+        widgets = (self.slider_void, self.spin_min_area, self.spin_max_area,
+                   self.spin_erosion, self.slider_clahe_clip, self.spin_roundness,
+                   self.chk_enhanced, self.chk_clahe, self.chk_morph, self.chk_edge)
+        for wgt in widgets:
+            wgt.blockSignals(True)
+        self.slider_void.setValue(int(det.get('threshold', 80)))
+        self.spin_min_area.setValue(int(det.get('min_area', 1)))
+        self.spin_max_area.setValue(int(det.get('max_area') or 0))
+        self.spin_erosion.setValue(int(det.get('roi_erosion_px', 3)))
+        self.chk_enhanced.setChecked(bool(det.get('enhanced', True)))
+        self.chk_clahe.setChecked(bool(det.get('clahe_enabled', True)))
+        self.slider_clahe_clip.setValue(
+            int(round(float(det.get('clahe_clip_limit', 2.0)) * 10)))
+        self.lbl_clahe_val.setText(f"{float(det.get('clahe_clip_limit', 2.0)):.1f}")
+        self.chk_morph.setChecked(bool(det.get('morph_enabled', True)))
+        self.spin_roundness.setValue(float(det.get('min_roundness', 0.0)))
+        self.chk_edge.setChecked(bool(det.get('edge_verify', False)))
+        for wgt in widgets:
+            wgt.blockSignals(False)
+
+        # 同步内部状态（calculate_voids 直接读这些属性）
+        self.void_min_area = int(det.get('min_area', 1))
+        max_v = det.get('max_area')
+        self.void_max_area = int(max_v) if max_v else None
+        self.roi_erosion_px = int(det.get('roi_erosion_px', 3))
+        self.enhanced_enabled = bool(det.get('enhanced', True))
+        self.enhanced_clahe = bool(det.get('clahe_enabled', True))
+        self.enhanced_clahe_clip = float(det.get('clahe_clip_limit', 2.0))
+        self.enhanced_morph = bool(det.get('morph_enabled', True))
+        self.enhanced_min_roundness = float(det.get('min_roundness', 0.0))
+        self.enhanced_edge_verify = bool(det.get('edge_verify', False))
+        self.enhanced_widgets.setVisible(self.enhanced_enabled)
+
+        # 3. 识别阈值放到最后，覆盖 finalize_roi 里的自动 Otsu
+        thresh = int(det.get('threshold', 80))
+        self.slider_void.setValue(thresh)
+        self.lbl_void_val.setText(str(thresh))
+
+        # 4. 标定（配方只记录 px/μm，换倍率拍摄时必须重新标定，界面明确提示）
+        cal = float(data.get('px_per_um') or 0.0)
+        if cal > 0:
+            self.pixel_scale = cal
+            self.lbl_scale_info.setText(
+                f"配方标定: 1 μm = {cal:.2f} px（换倍率需重新标定）")
+
+        # 5. 触发一次计算
+        if self.roi_mask is not None:
+            self.calculate_voids()
+
+    def on_delete_recipe(self):
+        """删除当前选中的配方"""
+        fn = self.combo_recipe.currentData()
+        if not fn:
+            return
+        name = self.combo_recipe.currentText()
+        ret = QMessageBox.question(
+            self, '确认删除', f"确定删除配方「{name}」？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        delete_recipe(fn)
+        if self.current_recipe_name == name:
+            self.current_recipe_name = None
+        self._refresh_recipe_combo()
 
     def on_polygon_edited(self, points):
         """多边形编辑回调"""

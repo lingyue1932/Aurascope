@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "type": "taught",
+  "name": "1",
+  "note": "样板图: 1.jpeg",
+  "updated": "2026-10-13T13:14:22",
+  "solder": {
+    "median": 211.0,
+    "std": 8.9,
+    "p5": 196.0,
+    "p95": 226.0,
+    "threshold": 190.0
+  },
+  "background": {
+    "median": 147.0,
+    "std": 42.3
+  },
+  "void": {
+    "threshold": 177.0,
+    "min_area": 105,
+    "max_area": 3338,
+    "min_roundness": 0.0,
+    "taught_count": 6,
+    "median": 125.0
+  },
+  "px_per_um": 17.36994697004658,
+  "ref_median": 179.0,
+  "band": {
+    "min_aspect": 3.0,
+    "min_area_frac": 0.01,
+    "open_kernel": 5,
+    "min_thickness_px": 8
+  },
+  "band_ref": {
+    "cx_norm": 0.4998,
+    "cy_norm": 0.4169,
+    "w_norm": 1.0,
+    "h_norm": 0.3073,
+    "area_frac": 0.2459,
+    "aspect": 17.164
+  },
+  "scale_bar": {
+    "horizontal": true,
+    "dark": false,
+    "length_px": 173.6994697004658,
+    "real_um": 10.0
+  },
+  "diagnostics": {
+    "solder_bg_separability": 2.5,
+    "solder_void_separability": 4.85,
+    "bg_same_gray_frac": 0.12
+  }
+}
