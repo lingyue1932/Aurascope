@@ -294,6 +294,9 @@ def validate_taught(model):
             'open_kernel': max(1, int(_clamp(band.get('open_kernel'), 1, 21, 5))),
             # 竖向最小厚度（px）：剔除挂在本体上的薄碎片；0 = 关闭
             'min_thickness_px': max(0, int(_clamp(band.get('min_thickness_px'), 0, 60, 8))),
+            # 贴边空洞缺口桥接窗口（px）：-1/缺省 = 自动（图宽 12%，最小 60）；
+            # 0 = 关闭桥接；>1 = 指定窗口宽度
+            'bridge_win_px': int(_clamp(band.get('bridge_win_px'), -1, 2000, -1)),
         },
         'band_ref': _validate_band_ref(model.get('band_ref')),
         'band_tol': _validate_band_tol(model.get('band_tol')),

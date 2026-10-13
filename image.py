@@ -1309,6 +1309,29 @@ def apply_taught_model(gray, model):
     if t_void is None:
         t_void = otsu_threshold(gray, band)
         warnings.append('空洞阈值退回带内 Otsu')
+
+    # 桥接"贴边空洞"造成的边界缺口：空洞是焊料内部的孔，贴到边界会把边界
+    # 咬出缺口、把面积挖掉。放在空洞检测之前，新纳入的空洞才能被正常检出。
+    # bridge_win_px：-1/缺省 = 自动，0 = 关闭，>1 = 指定窗口
+    _bw = band_cfg.get('bridge_win_px', -1)
+    bridge_win = -1 if _bw is None else int(_bw)
+    if bridge_win == 0:
+        diag = {**(diag or {}), 'bridge': {'reason': 'disabled'}}
+    else:
+        band_med = (float(np.median(gray[band > 0]))
+                    if cv2.countNonZero(band) else 0.0)
+        band2, br_diag = bridge_edge_voids(
+            band, gray, t_void, band_med,
+            win_px=(bridge_win if bridge_win > 1 else 0))
+        if br_diag.get('reason') == 'ok':
+            band = band2
+            solder_area = int(cv2.countNonZero(band))
+            if br_diag.get('bridged_frac', 0) > 0.005:
+                warnings.append(
+                    f"桥接了贴边空洞缺口 {br_diag['bridged_frac'] * 100:.1f}% 面积"
+                    f"（{br_diag.get('zones_bot', 0) + br_diag.get('zones_top', 0)} 处）")
+        diag = {**(diag or {}), 'bridge': br_diag}
+
     voids = detect_voids_in_band(
         gray, band, t_void,
         min_area=void_cfg.get('min_area') or 1,
@@ -1387,6 +1410,152 @@ def measure_bar_length(gray, x, y, w, h, horizontal=True, dark=True):
             if run > best:
                 best = run
     return int(best) if best >= 3 else None
+
+
+def _min_filter1d(a, k):
+    if k <= 1:
+        return np.asarray(a).copy()
+    p = k // 2
+    ap = np.pad(np.asarray(a), p, mode='edge')
+    return np.lib.stride_tricks.sliding_window_view(ap, k).min(axis=1)
+
+
+def _max_filter1d(a, k):
+    if k <= 1:
+        return np.asarray(a).copy()
+    p = k // 2
+    ap = np.pad(np.asarray(a), p, mode='edge')
+    return np.lib.stride_tricks.sliding_window_view(ap, k).max(axis=1)
+
+
+def bridge_edge_voids(band, gray, t_void, band_gray_med, win_px=0,
+                      dark_ratio=0.5, max_comp_frac=0.02,
+                      max_bridge_frac=0.05, min_run=5):
+    """桥接"贴边空洞"造成的边界缺口（逐列包络 + 只跨暗缺口）
+
+    问题：焊层带边界通常是材料界面（相对平缓），而贴到边界的空洞是暗的，
+    会在边界上咬出缺口。缺口处面积被挖掉 → 空洞率的分母偏小、空洞率偏大，
+    局部形状也失真。物理上空洞是焊料**内部**的孔，它占的位置应算作焊料。
+
+    做法：
+      1. 逐列取上下边界曲线；
+      2. 下边界做一维闭运算（填谷）、上边界做一维开运算（削峰）得到"包络"——
+         只桥接窄于 win_px 的缺口，其余保持原样；
+      3. **只在缺口内像素确实是"暗且独立"时才接受桥接**：
+         - 暗：灰度 < t_void + dark_ratio×(焊料亮度 − t_void)
+         - 独立：这些暗像素的连通域不能很大——与下方基板连成一片的暗区
+           属于"基板侵入/裂纹"，不能桥（否则把基板算成焊料）
+      4. 太短的接受段（< min_run 列）当噪声丢弃；
+      5. 桥接总面积超过 band 的 max_bridge_frac 时整体放弃（防误桥）。
+
+    Returns:
+        (new_band, diag)；未做任何桥接时返回原掩码
+    """
+    h, w = band.shape[:2]
+    cols = np.arange(w)
+    top = np.full(w, -1, np.int32)
+    bot = np.full(w, -1, np.int32)
+    for x in range(w):
+        idx = np.nonzero(band[:, x])[0]
+        if idx.size:
+            top[x], bot[x] = int(idx[0]), int(idx[-1])
+    valid = top >= 0
+    if valid.sum() < 10:
+        return band, {'bridged_px': 0, 'reason': 'band_empty'}
+    x0 = int(np.argmax(valid))
+    x1 = int(w - 1 - np.argmax(valid[::-1]))
+    xs = np.arange(x0, x1 + 1)
+    tv = np.interp(xs, cols[valid], top[valid]).round().astype(np.int32)
+    bv = np.interp(xs, cols[valid], bot[valid]).round().astype(np.int32)
+    xs_valid = valid[x0:x1 + 1]
+
+    if not win_px or win_px <= 1:
+        win_px = int(max(60, 0.12 * w))
+    k = int(max(3, win_px) | 1)
+
+    tv_open = _max_filter1d(_min_filter1d(tv, k), k)   # 削掉上边界的下凹
+    bv_close = _min_filter1d(_max_filter1d(bv, k), k)  # 填掉下边界的上凹
+    add_top = np.clip(tv_open - tv, 0, None)
+    add_bot = np.clip(bv_close - bv, 0, None)
+
+    # 暗且独立的判据
+    dark_cut = float(t_void) + dark_ratio * max(float(band_gray_med) - float(t_void), 0.0)
+    darks = (gray < dark_cut).astype(np.uint8)
+    n_lab, labels, stats, _ = cv2.connectedComponentsWithStats(darks)
+    comp_area = stats[:, 4] if n_lab > 1 else np.zeros(1, np.int64)
+    big_comp = np.zeros(n_lab, bool)
+    big_comp[1:] = comp_area[1:] > (max_comp_frac * h * w)
+
+    def _comp_ok(rows, x):
+        """扩展段能不能接受桥接
+
+        要求：① 段内暗像素占多数（说明缺口确实是被暗的东西咬出来的，
+        而不是灰阶过渡带）；② 这些暗像素不属于"大暗区"（下方基板）。
+        两者缺一不可——否则会把界面起伏或基板侵入一起桥掉。
+        """
+        seg = np.arange(rows.start, rows.stop)
+        if seg.size == 0:
+            return False
+        lab = labels[rows, x]
+        lab = lab[lab > 0]
+        if lab.size == 0 or lab.size < 0.5 * seg.size:
+            return False
+        return not big_comp[lab].any()
+
+    accept_top = np.zeros(len(xs), bool)
+    accept_bot = np.zeros(len(xs), bool)
+    for i, x in enumerate(xs):
+        if not xs_valid[i]:
+            continue
+        if add_bot[i] > 0:
+            accept_bot[i] = _comp_ok(slice(int(bv[i]), int(bv_close[i]) + 1), int(x))
+        if add_top[i] > 0:
+            accept_top[i] = _comp_ok(slice(int(tv_open[i]), int(tv[i]) + 1), int(x))
+
+    def _drop_short(mask, m):
+        if m < 2 or not mask.any():
+            return mask
+        out = mask.copy()
+        i = 0
+        n = len(out)
+        while i < n:
+            if not out[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and out[j]:
+                j += 1
+            if j - i < m:
+                out[i:j] = False
+            i = j
+        return out
+
+    accept_top = _drop_short(accept_top, min_run)
+    accept_bot = _drop_short(accept_bot, min_run)
+
+    new = band.copy()
+    for i, x in enumerate(xs):
+        if not xs_valid[i]:
+            continue
+        y0 = int(tv_open[i]) if accept_top[i] else int(tv[i])
+        y1 = int(bv_close[i]) if accept_bot[i] else int(bv[i])
+        if y1 >= y0:
+            new[y0:y1 + 1, x] = 255
+    new = fill_holes(new)
+
+    a0 = int(cv2.countNonZero(band))
+    a1 = int(cv2.countNonZero(new))
+    bridged = a1 - a0
+    diag = {'bridged_px': int(bridged),
+            'bridged_frac': round(bridged / a0, 4) if a0 else 0.0,
+            'zones_top': int(np.count_nonzero(accept_top)),
+            'zones_bot': int(np.count_nonzero(accept_bot)),
+            'win_px': k}
+    if bridged <= 0:
+        return band, {**diag, 'reason': 'nothing_to_bridge'}
+    if bridged > max_bridge_frac * a0:
+        return band, {**diag, 'reason': 'bridge_too_large'}
+    return new, {**diag, 'reason': 'ok'}
 
 
 def read_scale_bar(gray, template, model_bar, fallback_px_per_um=0.0):
