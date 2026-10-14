@@ -1635,40 +1635,117 @@ def make_thumb(img_bgr, band_mask, voids, target_h=46):
     return out
 
 
-def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10):
-    """把所有图纵向堆叠成"汇总大图"，顶部带汇总统计块
+def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10,
+                         layout='vertical', cols=2, tile_h=340):
+    """把所有图拼成"汇总大图"，顶部带汇总统计块
 
     Args:
-        entries: [{'img','band_mask','voids','lines','warn'}...] 按顺序堆叠
+        entries: [{'img','band_mask','voids','lines','warn'}...]
         summary_lines: 顶部汇总统计的文字行
-        sheet_width: 统一宽度（按宽度等比缩放，保留长宽比）
+        sheet_width: 纵向/网格模式下的整幅宽度（横向模式下用于封顶）
         gap: 图间空隙
+        layout: 'vertical' 纵向堆叠 | 'horizontal' 横向排一行 | 'grid' 网格(cols 列)
+        cols: 网格列数
+        tile_h: 横向模式下统一高度
     Returns:
         np.ndarray: 汇总大图（BGR）
     """
     tiles = []
-    if summary_lines:
-        lh = 10 + (18 + 7) * len(summary_lines)
-        header = np.full((lh, sheet_width, 3), 255, np.uint8)
-        header = _draw_text_block(header, summary_lines, font_size=18)
-        tiles.append(header)
-        tiles.append(np.full((gap, sheet_width, 3), 235, np.uint8))
+    warns = []
     for e in entries:
         img = e.get('img')
         if img is None:
             continue
-        tile = annotate_result(img, e['band_mask'], e.get('voids') or [],
-                               lines=e.get('lines') or [])
-        h, w = tile.shape[:2]
-        nh = max(1, int(round(h * (sheet_width / float(max(w, 1))))))
-        tile = cv2.resize(tile, (sheet_width, nh), interpolation=cv2.INTER_AREA)
-        if e.get('warn'):
-            cv2.rectangle(tile, (0, 0), (sheet_width - 1, nh - 1), (0, 0, 220), 3)
-        tiles.append(tile)
-        tiles.append(np.full((gap, sheet_width, 3), 235, np.uint8))
+        t = annotate_result(img, e['band_mask'], e.get('voids') or [],
+                            lines=e.get('lines') or [])
+        tiles.append((t, bool(e.get('warn'))))
     if not tiles:
         return None
-    return np.vstack(tiles[:-1])
+
+    def _resize_w(t, w):
+        h, ww = t.shape[:2]
+        return cv2.resize(t, (w, max(1, int(round(h * (w / float(ww)))))),
+                          interpolation=cv2.INTER_AREA)
+
+    def _resize_h(t, hh):
+        h, ww = t.shape[:2]
+        return cv2.resize(t, (max(1, int(round(ww * (hh / float(h))))), hh),
+                          interpolation=cv2.INTER_AREA)
+
+    GAPC = np.full((gap, 1, 3), 235, np.uint8)
+
+    if layout == 'horizontal':
+        # 统一高度，横向排一行（宽图会变得很宽，超限则自动退回纵向）
+        row = [_resize_h(t, tile_h) for t, _ in tiles]
+        total_w = sum(r.shape[1] for r in row) + gap * (len(row) - 1)
+        if total_w > 60000:
+            layout = 'vertical'
+            warns.append('横向总宽超过 60000px，已自动改用纵向堆叠')
+        else:
+            parts = []
+            for i, r in enumerate(row):
+                if i:
+                    parts.append(np.full((tile_h, gap, 3), 235, np.uint8))
+                parts.append(r)
+            body = np.hstack(parts)
+            if any(w for _, w in tiles):
+                cv2.rectangle(body, (0, 0), (body.shape[1] - 1, body.shape[0] - 1),
+                              (0, 0, 220), 3)
+            sheet_w = body.shape[1]
+
+    elif layout == 'grid':
+        cols = max(1, int(cols))
+        cell_w = (sheet_width - gap * (cols - 1)) // cols
+        cells = []
+        for t, w in tiles:
+            c = _resize_w(t, cell_w)
+            if w:
+                cv2.rectangle(c, (0, 0), (c.shape[1] - 1, c.shape[0] - 1),
+                              (0, 0, 220), 3)
+            cells.append(c)
+        rows = []
+        for i in range(0, len(cells), cols):
+            grp = cells[i:i + cols]
+            grp += [np.full_like(grp[0], 235)] * (cols - len(grp))
+            rows.append(np.hstack([x for j, x in enumerate(grp)
+                                   if j == 0] + sum(
+                [[np.full((x.shape[0], gap, 3), 235, np.uint8), x]
+                 for x in grp[1:]], [])))
+        # 各行高度不一，补背景后纵向拼
+        max_w = max(r.shape[1] for r in rows)
+        rows = [np.hstack([r, np.full((r.shape[0], max_w - r.shape[1], 3),
+                                      235, np.uint8)]) for r in rows]
+        body = np.vstack(sum([[r, np.full((gap, max_w, 3), 235, np.uint8)]
+                              for r in rows], [])[:-1])
+        sheet_w = max_w
+
+    if layout == 'vertical':
+        parts = []
+        for t, w in tiles:
+            r = _resize_w(t, sheet_width)
+            if w:
+                cv2.rectangle(r, (0, 0), (r.shape[1] - 1, r.shape[0] - 1),
+                              (0, 0, 220), 3)
+            parts.append(r)
+            parts.append(np.full((gap, sheet_width, 3), 235, np.uint8))
+        body = np.vstack(parts[:-1]) if parts else None
+        sheet_w = sheet_width
+
+    if body is None:
+        return None
+    # 顶部汇总块（宽度对齐最终画布）
+    out = []
+    if summary_lines:
+        lh = 10 + (18 + 7) * len(summary_lines)
+        header = np.full((lh, sheet_w, 3), 255, np.uint8)
+        header = _draw_text_block(header, summary_lines, font_size=18)
+        out.append(header)
+        out.append(np.full((gap, sheet_w, 3), 235, np.uint8))
+    if body.shape[1] != sheet_w:
+        pad = np.full((body.shape[0], sheet_w - body.shape[1], 3), 235, np.uint8)
+        body = np.hstack([body, pad]) if sheet_w > body.shape[1] else body
+    out.append(body)
+    return np.vstack(out)
 
 
 def read_scale_bar(gray, template, model_bar, fallback_px_per_um=0.0):

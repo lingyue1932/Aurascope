@@ -592,6 +592,17 @@ class TeachBatchTab(QWidget):
         self.btn_exp_sheet = create_success_button("导出汇总大图",
                                                    self.export_summary_sheet)
         exp.addWidget(self.btn_exp_sheet)
+        self.combo_sheet = QComboBox()
+        self.combo_sheet.addItem("排版：纵向堆叠", "vertical")
+        self.combo_sheet.addItem("排版：横向一行", "horizontal")
+        self.combo_sheet.addItem("排版：网格 2 列", "grid2")
+        self.combo_sheet.addItem("排版：网格 3 列", "grid3")
+        self.combo_sheet.setToolTip(
+            "汇总大图的排列方式：\n"
+            "纵向堆叠——每张占满整幅宽，从上往下排（宽图最清晰）\n"
+            "横向一行——统一高度、从左到右排（适合张数少）\n"
+            "网格——按列平铺，一屏看全（适合张数多）")
+        exp.addWidget(self.combo_sheet)
         exp.addStretch()
         v.addLayout(exp)
         return f
@@ -1439,6 +1450,15 @@ class TeachBatchTab(QWidget):
                 f"面积口径：检测掩码（人工修正的用人工轮廓）",
                 f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"]
 
+    def _sheet_layout_args(self):
+        """汇总大图排版参数（来自界面上的排版下拉框）"""
+        mode = self.combo_sheet.currentData() if hasattr(self, 'combo_sheet') else 'vertical'
+        if mode == 'horizontal':
+            return {'layout': 'horizontal'}
+        if mode in ('grid2', 'grid3'):
+            return {'layout': 'grid', 'cols': int(mode[-1])}
+        return {'layout': 'vertical'}
+
     def export_summary_sheet(self):
         """导出"所有图纵向堆叠"的汇总大图，顶部带汇总统计"""
         if not self.batch_results:
@@ -1449,7 +1469,9 @@ class TeachBatchTab(QWidget):
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "导出汇总大图",
-            f"空洞汇总_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+            # 默认名用中性 ASCII：部分公司加密/DLP 会按文件名关键词
+            # （汇总/报表/报告…）自动加密，输出成"打不开的锁文件"
+            f"Aurascope_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
             "PNG 图片 (*.png)")
         if not path:
             return
@@ -1466,21 +1488,24 @@ class TeachBatchTab(QWidget):
                     'voids': res['voids'], 'lines': lines,
                     'warn': bool(r.get('warnings')) or not r.get('ok'),
                 })
-            sheet = render_summary_sheet(entries, self._summary_lines(for_sheet=True),
-                                         sheet_width=1600)
+            sheet = render_summary_sheet(
+                entries, self._summary_lines(for_sheet=True),
+                sheet_width=1600, **self._sheet_layout_args())
             if sheet is None:
                 QMessageBox.warning(self, "提示", "汇总图生成失败")
                 return
             if not self._save_png(path, sheet):
-                QMessageBox.warning(self, "错误", "汇总大图写入失败或校验不通过")
+                QMessageBox.warning(self, "汇总大图导出失败",
+                                    self._last_save_error or "写入失败")
                 return
         finally:
             QApplication.restoreOverrideCursor()
         real = path if path.lower().endswith('.png') else path + '.png'
-        QMessageBox.information(
-            self, "完成",
-            f"已导出汇总大图（{sheet.shape[1]}×{sheet.shape[0]}）\n{real}\n"
-            f"大小 {self._kb(real)}")
+        msg = (f"已导出汇总大图（{sheet.shape[1]}×{sheet.shape[0]}）\n{real}\n"
+               f"大小 {self._kb(real)}")
+        if getattr(self, '_last_save_warning', ''):
+            msg += "\n\n" + self._last_save_warning
+        QMessageBox.information(self, "完成", msg)
 
     def export_csv(self):
         if not self.batch_results:
@@ -1896,38 +1921,103 @@ class TeachBatchTab(QWidget):
         rest = (head[1] + '\n' if len(head) > 1 else '')
         self.lbl_stats.setText(rest + '\n'.join(lines[1:3]))
 
-    @staticmethod
-    def _save_png(path, img_bgr):
-        """写 PNG 并回读校验（绕开 cv2.imwrite 中文路径问题）
+    def _save_png(self, path, img_bgr):
+        """写 PNG 并做三重校验（绕开 cv2.imwrite 中文路径问题）
 
-        两件事必须做：
         1. 另存为对话框不会自动补扩展名——用户输入不带 .png 时 Qt 照原样存成
            无扩展名文件，Windows 便当作未知/损坏文件；
-        2. 先写临时文件再原子替换，避免中途失败留下半截文件。
-        写完再回读一次确认是有效 PNG。
+        2. 先写临时文件再原子替换，避免中途失败留下半截文件；
+        3. 写完回读校验：能解码 + **文件头确实是该格式的签名**。
+        第 3 条里的签名校验专门用来识别"文件被外部程序改写"的情况——
+        公司加密/DLP/杀软透明加密时，落盘内容的头几个字节会变，
+        Windows 就会报文件损坏。这种情况必须明确告诉用户，而不是静默成功。
         """
+        self._last_save_error = ''
+        self._last_save_warning = ''
         if img_bgr is None or getattr(img_bgr, 'size', 0) == 0:
+            self._last_save_error = '图像为空'
             return False
         if img_bgr.ndim == 2:
             img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
         root, ext = os.path.splitext(path)
         if ext.lower() not in ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'):
             path = path + '.png'
-        ok, buf = cv2.imencode(os.path.splitext(path)[1].lower() or '.png', img_bgr)
-        if not ok:
-            return False
+            ext = '.png'
+        ext = ext.lower() or '.png'
         try:
+            ok, buf = cv2.imencode(ext, img_bgr)
+            if not ok:
+                self._last_save_error = '图像编码失败'
+                return False
             tmp = path + '.part'
             with open(tmp, 'wb') as f:
                 f.write(buf.tobytes())
-            os.replace(tmp, path)
-        except Exception:
+            os.replace(tmp, path)                 # 原子替换，不留半截文件
+        except Exception as e:
+            self._last_save_error = f'写入失败：{e}'
             return False
+        # 回读校验（顺序很关键：先认第三方加密容器，再验格式签名，最后才解码）
+        self._last_save_warning = ''
         try:
+            if os.path.getsize(path) <= 0:
+                self._last_save_error = '写入后文件为空'
+                return False
+            with open(path, 'rb') as fh:      # 显式关闭：避免句柄残留把文件"锁住"
+                raw = fh.read(4096)
+            head = raw[:8]
+            # ① 第三方加密容器（亿赛通 E-SafeNet 等 DLP 会在文件头写厂商标记，
+            #    整份文件被包进加密容器：既不是 PNG，也没有标准 ENCRYPTED 属性）
+            vendor = ''
+            for mark, name in ((b'E-SafeNet', 'E-SafeNet（亿赛通）'),
+                               (b'ESafeNet', 'E-SafeNet（亿赛通）'),
+                               (b'DSMEncr', '亿赛通 DSM')):
+                if mark in raw:
+                    vendor = name
+                    break
+            if vendor:
+                self._last_save_error = (
+                    f'⛔ 该文件已被「{vendor}」数据防泄漏软件加密——'
+                    '不是程序写坏的，是 DLP 策略命中了本程序。\n'
+                    '本机部分程序能打开，发给别人或换机器会显示损坏。\n'
+                    '解决：请 IT 把本程序加入其「信任进程白名单」，'
+                    '或把输出目录加入「不加密目录」。')
+                return False
+            # ② 格式签名
+            sigs = {'.png': (b'\x89PNG\r\n\x1a\n',),
+                    '.jpg': (b'\xff\xd8\xff',), '.jpeg': (b'\xff\xd8\xff',),
+                    '.bmp': (b'BM',),
+                    '.tif': (b'II*\x00', b'MM\x00*'),
+                    '.tiff': (b'II*\x00', b'MM\x00*')}.get(ext, ())
+            if sigs and not any(head.startswith(s) for s in sigs):
+                self._last_save_error = (
+                    '写入后文件头不是 ' + ext.lstrip('.').upper() +
+                    f'（实际 {head[:4].hex(" ")}）——文件被外部程序改写了，'
+                    '常见于公司加密/DLP 或安全软件；'
+                    '请把本程序/保存目录加入其白名单')
+                return False
+            # ③ 能否解码
             back = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-        except Exception:
+            if back is None:
+                self._last_save_error = '写入后无法解码（文件可能已损坏）'
+                return False
+            # ④ 标准加密属性（EFS 等）
+            try:
+                st = os.stat(path)
+                attrs = getattr(st, 'st_file_attributes', 0) or 0
+                if attrs & 0x4000:      # FILE_ATTRIBUTE_ENCRYPTED
+                    self._last_save_warning = (
+                        '⚠ 注意：该文件被系统标记为「加密」（ENCRYPTED 属性）。'
+                        '本机能打开，换机器或发给别人可能打不开，'
+                        '需要把保存目录加入加密软件白名单')
+                elif attrs & 0x1:       # FILE_ATTRIBUTE_READONLY
+                    self._last_save_warning = '注意：该文件带只读属性'
+            except Exception:
+                pass
+        except Exception as e:
+            self._last_save_error = f'校验失败：{e}'
             return False
-        return back is not None
+        self._saved_path = path
+        return True
 
     @staticmethod
     def _kb(path):
@@ -1982,13 +2072,15 @@ class TeachBatchTab(QWidget):
             real = path if path.lower().endswith('.png') else path + '.png'
             if not self._save_png(path, out):
                 QMessageBox.warning(self, "导出失败",
-                                    f"写入失败（目标不可写？）：{real}")
+                                    f"{self._last_save_error}\n目标：{real}")
                 return
         except Exception as e:
             QMessageBox.warning(self, "错误", f"导出失败: {e}")
             return
-        QMessageBox.information(self, "成功",
-                                f"已导出：{real}\n大小 {self._kb(real)}")
+        msg = f"已导出：{real}\n大小 {self._kb(real)}"
+        if getattr(self, '_last_save_warning', ''):
+            msg += "\n\n" + self._last_save_warning
+        QMessageBox.information(self, "成功", msg)
 
     def export_annotated_all(self):
         """批量导出全部图的标注图到指定文件夹（复核/报告用）"""
@@ -2004,6 +2096,7 @@ class TeachBatchTab(QWidget):
         progress.setMinimumDuration(0)
         progress.setValue(0)
         ok_cnt, fail_cnt = 0, 0
+        first_err = ''
         for i, r in enumerate(self.batch_results):
             if progress.wasCanceled():
                 break
@@ -2022,13 +2115,18 @@ class TeachBatchTab(QWidget):
                     ok_cnt += 1
                 else:
                     fail_cnt += 1
+                    if not first_err:
+                        first_err = self._last_save_error
             except Exception:
                 fail_cnt += 1
         progress.setValue(total)
         progress.close()
-        QMessageBox.information(
-            self, "完成",
-            f"已导出 {ok_cnt} 张标注图，失败 {fail_cnt} 张\n输出目录：{folder}")
+        msg = f"已导出 {ok_cnt} 张标注图，失败 {fail_cnt} 张\n输出目录：{folder}"
+        if getattr(self, '_last_save_warning', ''):
+            msg += "\n\n" + self._last_save_warning
+        if fail_cnt and first_err:
+            msg += f"\n\n失败原因（首条）：{first_err}"
+        QMessageBox.information(self, "完成", msg)
 
     # ================== 状态刷新 ==================
 
