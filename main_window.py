@@ -43,14 +43,14 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Aurascope V4.3   by: LINGYUE")
+        self.setWindowTitle("Aurascope V5.1   by: LINGYUE")
         self.resize(1000, 600)
         
-        # # 设置窗口图标
-        # try:
-        #     self.setWindowIcon(QIcon(r"logo.ico"))
-        # except:
-        #     pass
+        # 设置窗口图标
+        try:
+            self.setWindowIcon(QIcon(r"logo_1.ico"))
+        except:
+            pass
 
         # 核心数据
         self.pixel_scale = 0

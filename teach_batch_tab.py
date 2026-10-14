@@ -1904,7 +1904,7 @@ class TeachBatchTab(QWidget):
         1. 另存为对话框不会自动补扩展名——用户输入不带 .png 时 Qt 照原样存成
            无扩展名文件，Windows 便当作未知/损坏文件；
         2. 先写临时文件再原子替换，避免中途失败留下半截文件。
-        写完再回读一次确认是有效 PNG，失败要明确报错。
+        写完再回读一次确认是有效 PNG。
         """
         if img_bgr is None or getattr(img_bgr, 'size', 0) == 0:
             return False
@@ -1913,26 +1913,21 @@ class TeachBatchTab(QWidget):
         root, ext = os.path.splitext(path)
         if ext.lower() not in ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'):
             path = path + '.png'
-            ext = '.png'
+        ok, buf = cv2.imencode(os.path.splitext(path)[1].lower() or '.png', img_bgr)
+        if not ok:
+            return False
         try:
-            ok, buf = cv2.imencode(ext.lower() or '.png', img_bgr)
-            if not ok:
-                return False
             tmp = path + '.part'
             with open(tmp, 'wb') as f:
                 f.write(buf.tobytes())
-            os.replace(tmp, path)                 # 原子替换，不留半截文件
+            os.replace(tmp, path)
         except Exception:
             return False
         try:
-            if os.path.getsize(path) <= 0:
-                return False
             back = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-            if back is None:
-                return False
         except Exception:
             return False
-        return True
+        return back is not None
 
     @staticmethod
     def _kb(path):
@@ -1992,9 +1987,8 @@ class TeachBatchTab(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "错误", f"导出失败: {e}")
             return
-        QMessageBox.information(
-            self, "成功",
-            f"已导出：{real}\n大小 {self._kb(real)}")
+        QMessageBox.information(self, "成功",
+                                f"已导出：{real}\n大小 {self._kb(real)}")
 
     def export_annotated_all(self):
         """批量导出全部图的标注图到指定文件夹（复核/报告用）"""
