@@ -2,8 +2,8 @@
   "schema_version": 3,
   "type": "taught",
   "name": "6",
-  "note": "样板图: 3.tif",
-  "updated": "2026-10-13T16:54:59",
+  "note": "快速示教：点选 3 个空洞",
+  "updated": "",
   "solder": {
     "median": 225.0,
     "std": 11.3,
@@ -16,17 +16,17 @@
     "std": 63.5
   },
   "void": {
-    "threshold": 192.0,
+    "threshold": 162.0,
     "min_area": 0,
-    "min_area_taught": 28,
+    "min_area_taught": 5,
     "max_area": null,
-    "max_area_taught": 3374,
+    "max_area_taught": 838,
     "min_roundness": 0.0,
     "depth_offset": 0.0,
-    "taught_count": 6,
-    "median": 108.0
+    "taught_count": 3,
+    "median": 87.0
   },
-  "px_per_um": 11.743199065436357,
+  "px_per_um": 0.0,
   "ref_median": 22.0,
   "band": {
     "min_aspect": 3.0,
@@ -44,13 +44,13 @@
   },
   "scale_bar": {
     "horizontal": true,
-    "dark": false,
-    "length_px": 234.86398130872715,
-    "real_um": 20.0
+    "dark": true,
+    "length_px": 0.0,
+    "real_um": 0.0
   },
   "diagnostics": {
     "solder_bg_separability": 2.75,
-    "solder_void_separability": 3.74,
+    "solder_void_separability": 7.14,
     "bg_same_gray_frac": 0.0
   }
 }

@@ -1,0 +1,56 @@
+{
+  "schema_version": 3,
+  "type": "taught",
+  "name": "激光器",
+  "note": "样板图: 6.jpg",
+  "updated": "2026-10-14T13:53:12",
+  "solder": {
+    "median": 195.0,
+    "std": 10.1,
+    "p5": 177.0,
+    "p95": 209.0,
+    "threshold": 158.0
+  },
+  "background": {
+    "median": 128.0,
+    "std": 45.6
+  },
+  "void": {
+    "threshold": 130.0,
+    "min_area": 0,
+    "min_area_taught": 174,
+    "max_area": null,
+    "max_area_taught": 696,
+    "min_roundness": 0.0,
+    "depth_offset": 0.0,
+    "taught_count": 1,
+    "median": 53.0
+  },
+  "px_per_um": 11.031479407739209,
+  "ref_median": 139.0,
+  "band": {
+    "min_aspect": 3.0,
+    "min_area_frac": 0.01,
+    "open_kernel": 5,
+    "min_thickness_px": 8
+  },
+  "band_ref": {
+    "cx_norm": 0.499,
+    "cy_norm": 0.5638,
+    "w_norm": 1.0,
+    "h_norm": 0.1119,
+    "area_frac": 0.10512,
+    "aspect": 8.0
+  },
+  "scale_bar": {
+    "horizontal": true,
+    "dark": true,
+    "length_px": 110.3147940773921,
+    "real_um": 10.0
+  },
+  "diagnostics": {
+    "solder_bg_separability": 2.41,
+    "solder_void_separability": 11.6,
+    "bg_same_gray_frac": 0.0
+  }
+}

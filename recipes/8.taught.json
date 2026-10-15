@@ -2,32 +2,32 @@
   "schema_version": 3,
   "type": "taught",
   "name": "8",
-  "note": "样板图: 1.tif",
-  "updated": "2026-10-13T16:17:43",
+  "note": "快速示教：点选 7 个空洞",
+  "updated": "",
   "solder": {
-    "median": 222.0,
-    "std": 12.0,
+    "median": 221.0,
+    "std": 11.3,
     "p5": 202.0,
-    "p95": 239.0,
-    "threshold": 176.0
+    "p95": 238.0,
+    "threshold": 175.0
   },
   "background": {
-    "median": 44.0,
-    "std": 62.1
+    "median": 123.0,
+    "std": 62.2
   },
   "void": {
-    "threshold": 172.0,
+    "threshold": 195.0,
     "min_area": 0,
-    "min_area_taught": 35,
+    "min_area_taught": 9,
     "max_area": null,
-    "max_area_taught": 554,
+    "max_area_taught": 1028,
     "min_roundness": 0.0,
     "depth_offset": 0.0,
-    "taught_count": 5,
-    "median": 0.0
+    "taught_count": 7,
+    "median": 87.0
   },
-  "px_per_um": 11.656848525398575,
-  "ref_median": 30.0,
+  "px_per_um": 0.0,
+  "ref_median": 25.0,
   "band": {
     "min_aspect": 3.0,
     "min_area_frac": 0.01,
@@ -36,21 +36,21 @@
   },
   "band_ref": {
     "cx_norm": 0.4993,
-    "cy_norm": 0.3253,
+    "cy_norm": 0.3112,
     "w_norm": 1.0,
-    "h_norm": 0.0654,
-    "area_frac": 0.05754,
-    "aspect": 13.241
+    "h_norm": 0.0665,
+    "area_frac": 0.06201,
+    "aspect": 13.017
   },
   "scale_bar": {
     "horizontal": true,
-    "dark": false,
-    "length_px": 233.13697050797148,
-    "real_um": 20.0
+    "dark": true,
+    "length_px": 0.0,
+    "real_um": 0.0
   },
   "diagnostics": {
-    "solder_bg_separability": 4.81,
-    "solder_void_separability": 7.61,
+    "solder_bg_separability": 2.67,
+    "solder_void_separability": 3.75,
     "bg_same_gray_frac": 0.0
   }
 }

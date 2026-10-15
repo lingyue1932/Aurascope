@@ -20,7 +20,7 @@ import cv2
 import pandas as pd
 from datetime import datetime
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
+from PyQt6.QtWidgets import (QDialog,QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
                              QFrame, QScrollArea, QLabel, QTableWidget,
                              QTableWidgetItem, QHeaderView, QInputDialog,
                              QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
@@ -36,7 +36,8 @@ from image import (polygon_to_mask, otsu_threshold, locate_solder_band,
                    grab_local_dark_blob, learn_taught_model, apply_taught_model,
                    read_scale_bar, resample_polygon_points, two_class_threshold,
                    annotate_result, make_thumb, render_summary_sheet)
-from recipe import list_recipes, load_recipe, save_taught, load_bar_template
+from recipe import (list_recipes, load_recipe, save_taught, load_bar_template,
+                    _recipe_root)
 from ui_components import (create_primary_button, create_secondary_button,
                            create_success_button, create_danger_button,
                            create_step_title, create_info_label,
@@ -174,6 +175,8 @@ class TeachBatchTab(QWidget):
         self.preview_row = None
         self._batch_canceled = False
         self._last_model = None            # 最近一次批量的模型（预览/导出时按需重算）
+        self.quick_cfg = None              # 「快速设定」的设定值（复用整批）
+        self.quick_model = None            # 由 quick_cfg 生成的合成配方
         self._last_bar_template = None
         # 单图核对与修正
         self.result_edits = {}             # row -> {'mask','polygon','voids','caliber'}
@@ -414,6 +417,18 @@ class TeachBatchTab(QWidget):
         self.lbl_folder = create_info_label("未选择文件夹")
         self.lbl_folder.setStyleSheet("font-size: 12px; color: #4a5568;")
         v.addWidget(self.lbl_folder)
+
+        # 快速示教（两步·操作最少）：① 焊层区域（打开即自动识别） ② 点选空洞（点完自动学习）
+        self.btn_quick_teach = create_secondary_button("快速示教（两步）", self.on_quick_teach)
+        self.btn_quick_teach.setToolTip(
+            "自动挑一张代表性图打开：① 焊层区域已自动识别好（不对可手绘/拖顶点）\n"
+            "② 左键点 2~3 个典型空洞，点完自动学习并实时显示结果；点错按 Delete 删除。\n"
+            "算法与完整示教完全同源，学出的模型直接用于整批检测。")
+        v.addWidget(self.btn_quick_teach)
+        self.lbl_quick_teach = create_info_label("")
+        self.lbl_quick_teach.setWordWrap(True)
+        self.lbl_quick_teach.setStyleSheet("font-size: 12px; color: #0F6E56;")
+        v.addWidget(self.lbl_quick_teach)
 
         row = QHBoxLayout()
         self.btn_run = create_primary_button("开始批量", self.start_batch)
@@ -1192,22 +1207,161 @@ class TeachBatchTab(QWidget):
             QMessageBox.information(self, "提示", "该文件夹下没有图片文件")
             return
         self.batch_paths = paths
+        self.batch_dir = folder
         self.lbl_folder.setText(f"已选择 {len(paths)} 张：{os.path.basename(folder)}")
+        # 换批次文件夹 → 清掉上一次的快速示教模型（避免误用到别的器件上）
+        self.quick_cfg = None
+        self.quick_model = None
+        self.lbl_quick_teach.setText("")
+        # 复用：若配方库里已有"与该文件夹同名"的配方，自动选中并提示（省去重新示教）
+        name = os.path.basename(os.path.normpath(folder))
+        try:
+            idx = self.combo_recipe.findData(f'{name}.taught.json')
+            if idx < 0:
+                idx = self.combo_recipe.findText(name)
+            if idx >= 0:
+                self.combo_recipe.setCurrentIndex(idx)
+                self.lbl_quick_teach.setText(
+                    f"已自动带出同名配方「{name}」——可直接开始批量；"
+                    f"要重做就点上方「快速示教（两步）」")
+        except Exception:
+            pass
 
-    def start_batch(self):
-        fn = self.combo_recipe.currentData()
-        if not fn:
-            QMessageBox.information(self, "提示", "请先选择示教配方")
-            return
-        model = load_recipe(fn)
-        if model is None or model.get('type') != 'taught':
-            QMessageBox.warning(self, "错误", "配方读取失败或不是示教配方")
-            self.refresh_recipe_combo()
-            return
+    # ================== 快速设定（免示教路径） ==================
+
+    def _pick_setup_image(self, max_probe=12):
+        """挑一张代表性图用于快速示教：p90 最接近整批中位数的那张
+
+        直接取第一张有坑：批次里常有"总览/空白"图（p90 明显偏低），
+        拿它示教出来的阈值套整批会严重偏低。抽样比较 p90，取最接近中位数的那张；
+        并**优先纯数字命名的切片**（N-1.jpg / A.jpg 这类变体或总览图不作基准）。
+        """
+        paths = self.batch_paths
+        if not paths:
+            return None
+        if len(paths) <= 1:
+            return paths[0]
+        numeric = [p for p in paths
+                   if os.path.splitext(os.path.basename(p))[0].isdigit()]
+        if len(numeric) >= 3:
+            paths = numeric
+        step = max(1, len(paths) // int(max_probe))
+        sample = paths[::step][:int(max_probe)]
+        vals = []
+        for p in sample:
+            img = read_image_file(p)
+            if img is None:
+                continue
+            g = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            vals.append((float(np.percentile(g, 90)), p))
+        if not vals:
+            return paths[0]
+        med = float(np.median([v for v, _ in vals]))
+        vals.sort(key=lambda t: abs(t[0] - med))
+        return vals[0][1]
+
+    def _teach_candidates(self, cap=80):
+        """本批次可用于示教的图（优先纯数字切片；最多 cap 张）"""
+        paths = list(self.batch_paths or [])
+        numeric = [p for p in paths
+                   if os.path.splitext(os.path.basename(p))[0].isdigit()]
+        return (numeric or paths)[:int(cap)]
+
+    def on_quick_teach(self):
+        """快速示教（两步）：自动挑代表性图 → 弹窗（焊层区域已自动识别 + 点选空洞）→ 整批复用"""
         if not self.batch_paths:
             QMessageBox.information(self, "提示", "请先选择批次文件夹")
             return
-        bar_template = load_bar_template(fn)
+        setup_path = self._pick_setup_image()
+        if not setup_path:
+            QMessageBox.warning(self, "错误", "无法选出用于示教的图片")
+            return
+        img = read_image_file(setup_path)
+        if img is None:
+            QMessageBox.warning(self, "错误", f"图片读取失败：{os.path.basename(setup_path)}")
+            return
+        gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        try:
+            from quick_teach_dialog import QuickTeachDialog
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"快速示教模块不可用：{e}")
+            return
+        suggest = os.path.basename(os.path.normpath(getattr(self, 'batch_dir', '') or ''))
+        candidates = self._teach_candidates()
+        # 允许用户"更换示教图片"：换完重开对话框（约定返回码 Accepted+100）
+        SWITCH = QDialog.DialogCode.Accepted + 100
+        while True:
+            img_i = read_image_file(setup_path)
+            if img_i is None:
+                QMessageBox.warning(self, "错误", "图片读取失败：" + setup_path)
+                return
+            gray_i = img_i if img_i.ndim == 2 else cv2.cvtColor(img_i, cv2.COLOR_BGR2GRAY)
+            dlg = QuickTeachDialog(
+                gray_i, sample_name=os.path.basename(setup_path), parent=self,
+                title=f"快速示教：{os.path.basename(setup_path)}"
+                      f"（整批共 {len(self.batch_paths)} 张）",
+                suggest_name=suggest, candidates=candidates,
+                current_path=setup_path)
+            rc = dlg.exec()
+            if rc == SWITCH and getattr(dlg, 'picked_path', None):
+                setup_path = dlg.picked_path          # 用户换了基准图 → 用新图重开
+                continue
+            break
+        if rc != QDialog.DialogCode.Accepted or dlg.get_model() is None:
+            return
+        self.quick_cfg = None
+        self.quick_model = dlg.get_model()
+        # 存过配方就刷新下拉框并选中它，方便以后一键复用
+        if getattr(dlg, 'saved_name', None):
+            self.refresh_recipe_combo()
+            idx = self.combo_recipe.findData(f'{dlg.saved_name}.taught.json')
+            if idx < 0:
+                idx = self.combo_recipe.findText(dlg.saved_name)
+            if idx >= 0:
+                self.combo_recipe.setCurrentIndex(idx)
+            self.lbl_quick_teach.setText(
+                f"已学并保存为配方「{dlg.saved_name}」——以后选同一批次文件夹会自动带出，"
+                f"也可在下拉框直接选用；本次已直接用于整批 ✔")
+        else:
+            self._show_quick_label()
+
+    def _show_quick_label(self):
+        """底部提示条：显示当前快速示教模型的阈值与示例图统计"""
+        m = self.quick_model
+        if not m:
+            self.lbl_quick_teach.setText("")
+            return
+        sol = (m.get('solder') or {}).get('threshold', 0)
+        voi = (m.get('void') or {}).get('threshold', 0)
+        n_pick = 0
+        try:
+            n_pick = int((m.get('note') or '').split('点选')[1].split('个')[0])
+        except Exception:
+            pass
+        self.lbl_quick_teach.setText(
+            f"快速示教已生效：t_焊层={sol:.0f}　t_空洞={voi:.0f}　点选 {n_pick} 个空洞"
+            f"　（点上方按钮可重做）")
+
+    def start_batch(self):
+        # 快速示教/快速设定路径优先：有模型就直接用它，不再要求配方
+        if self.quick_model is not None:
+            fn, model, bar_template = None, self.quick_model, None
+        else:
+            fn = self.combo_recipe.currentData()
+            if not fn:
+                QMessageBox.information(
+                    self, "提示",
+                    "请先选择示教配方，或点「快速示教（弹窗）」/「快速设定（免示教）」")
+                return
+            model = load_recipe(fn)
+            if model is None or model.get('type') != 'taught':
+                QMessageBox.warning(self, "错误", "配方读取失败或不是示教配方")
+                self.refresh_recipe_combo()
+                return
+            bar_template = load_bar_template(fn)
+        if not self.batch_paths:
+            QMessageBox.information(self, "提示", "请先选择批次文件夹")
+            return
 
         self.batch_results = []
         self.result_edits = {}

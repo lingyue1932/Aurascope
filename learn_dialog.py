@@ -2,6 +2,7 @@
 """学习过程窗口：把「开始学习」到底做了哪些事、得到了什么数，逐条摊开给用户看"""
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QScrollArea, QWidget, QFrame)
 
@@ -47,8 +48,9 @@ class LearnReportDialog(QDialog):
             cap.setStyleSheet("color:#718096; font-size:12px;")
             hv.addWidget(cap)
             pic = QLabel()
-            pic.setPixmap(preview.scaledToWidth(
-                min(620, max(320, preview.width())),
+            pix = preview if isinstance(preview, QPixmap) else QPixmap.fromImage(preview)
+            pic.setPixmap(pix.scaledToWidth(
+                min(620, max(320, pix.width())),
                 Qt.TransformationMode.SmoothTransformation))
             pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pic.setStyleSheet("background:#ffffff; border:1px solid #e2e8f0;"

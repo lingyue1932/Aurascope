@@ -1,0 +1,56 @@
+{
+  "schema_version": 3,
+  "type": "taught",
+  "name": "CP1",
+  "note": "样板图: 2.jpg",
+  "updated": "2026-10-14T11:24:48",
+  "solder": {
+    "median": 199.0,
+    "std": 10.4,
+    "p5": 180.0,
+    "p95": 213.0,
+    "threshold": 161.0
+  },
+  "background": {
+    "median": 130.0,
+    "std": 45.4
+  },
+  "void": {
+    "threshold": 170.0,
+    "min_area": 0,
+    "min_area_taught": 21,
+    "max_area": null,
+    "max_area_taught": 564,
+    "min_roundness": 0.0,
+    "depth_offset": 0.0,
+    "taught_count": 2,
+    "median": 114.0
+  },
+  "px_per_um": 11.092063729532038,
+  "ref_median": 141.0,
+  "band": {
+    "min_aspect": 3.0,
+    "min_area_frac": 0.01,
+    "open_kernel": 5,
+    "min_thickness_px": 8
+  },
+  "band_ref": {
+    "cx_norm": 0.499,
+    "cy_norm": 0.576,
+    "w_norm": 1.0,
+    "h_norm": 0.1119,
+    "area_frac": 0.1052,
+    "aspect": 8.0
+  },
+  "scale_bar": {
+    "horizontal": true,
+    "dark": true,
+    "length_px": 110.92063729532038,
+    "real_um": 10.0
+  },
+  "diagnostics": {
+    "solder_bg_separability": 2.47,
+    "solder_void_separability": 3.97,
+    "bg_same_gray_frac": 0.001
+  }
+}

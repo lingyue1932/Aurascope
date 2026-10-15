@@ -4,7 +4,24 @@ import os
 
 import cv2
 import numpy as np
-from PyQt6.QtWidgets import QApplication
+
+try:                                  # GUI 是可选依赖：报告工具/无界面场景下不需要
+    from PyQt6.QtWidgets import QApplication
+except Exception:                     # pragma: no cover
+    QApplication = None
+
+
+def _pump_events():
+    """长循环里让界面有机会刷新（没有 GUI 时什么都不做）
+
+    原先直接调用 QApplication.processEvents()，把分析引擎和 PyQt6 绑死了，
+    外部（如报告生成工具）只想用算法也得拖上整个 GUI 库。
+    """
+    if QApplication is not None:
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
 
 
 def extract_threshold_contour(img, rect_tuple, thresh_val):
@@ -220,7 +237,7 @@ def detect_voids(gray_img, roi_mask, thresh_val,
 
     for i, cnt in enumerate(contours):
         if i % 10 == 0:
-            QApplication.processEvents()
+            _pump_events()
         area = cv2.contourArea(cnt)
         if area < min_area:
             continue
@@ -357,7 +374,7 @@ def detect_voids_local(gray_img, roi_mask, global_thresh_val, local_regions=None
 
     for i, cnt in enumerate(contours):
         if i % 10 == 0:
-            QApplication.processEvents()
+            _pump_events()
         area = cv2.contourArea(cnt)
         if area < min_area:
             continue
@@ -501,7 +518,7 @@ def detect_objects(gray_img,
 
     for i, cnt in enumerate(contours):
         if i % 10 == 0:
-            QApplication.processEvents()
+            _pump_events()
         area = cv2.contourArea(cnt)
         if area < min_area:
             continue
@@ -1350,6 +1367,14 @@ def apply_taught_model(gray, model):
                      auto_max_void_area(solder_area))
     depth_off = float(void_cfg.get('depth_offset') or 0)
     t_void_used = float(t_void) + depth_off
+    # 「快速设定」路径：空i洞阈值按**相对深度 Δ** 逐图自适应
+    #   t_空洞 = 本图焊层带中位灰度 − Δ
+    # 这样同一批里亮度不同的图都用同一个"比焊料暗多少"的标准，而不是固定的绝对灰度。
+    if model.get('quick') and model.get('delta') is not None \
+            and float(model.get('delta')) > 0:
+        _bm = float(np.median(gray[band > 0])) if np.count_nonzero(band) else None
+        if _bm is not None:
+            t_void_used = _bm - float(model['delta']) + depth_off
 
     voids_all = detect_voids_in_band(
         gray, band, t_void_used,
