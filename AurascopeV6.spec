@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['AuscopeV5.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[],
