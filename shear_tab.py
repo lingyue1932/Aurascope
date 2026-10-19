@@ -102,7 +102,12 @@ class ShearTab(QWidget):
             lbl.setObjectName("StatValue")
             badge = QLabel(f"x{mult}")
             badge.setObjectName("ForceBadge")
-            badge.setStyleSheet(f"color: {color}; background: {color}15;")
+            # 注意：`{color}15` 是网页写法 ✗ Qt 会当成 #AARRGGBB（alpha 在前）→ 变成深底深字 ✗
+            _h = color.lstrip('#')
+            _r, _g, _b = int(_h[0:2], 16), int(_h[2:4], 16), int(_h[4:6], 16)
+            badge.setStyleSheet(
+                f"color: {color}; background: rgba({_r},{_g},{_b},0.10);"
+                f" border: 1px solid rgba({_r},{_g},{_b},0.30); border-radius: 6px;")
             hdr.addWidget(lbl)
             hdr.addStretch()
             hdr.addWidget(badge)

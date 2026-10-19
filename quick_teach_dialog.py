@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QListWidget, QListWidgetItem, QAbstractItemView,
                              QPushButton)
 from PyQt6.QtCore import Qt, QTimer, QSize
+from PyQt6.QtGui import QImage, QPixmap, QIcon
 
 from canvas import ImageCanvas
 from image import (locate_solder_band, polygon_to_mask, grab_local_dark_blob,
@@ -89,7 +90,7 @@ class ImagePickerDialog(QDialog):
             same = self._cur and os.path.abspath(p) == os.path.abspath(self._cur)
             it = QListWidgetItem(('★ ' if same else '') + os.path.basename(p))
             try:
-                it.setIcon(self._loader(p))
+                it.setIcon(QIcon(self._loader(p)))   # ✗ setIcon 要 QIcon，传 QPixmap 会静默失败
             except Exception:
                 pass
             it.setData(Qt.ItemDataRole.UserRole, p)
@@ -277,9 +278,10 @@ class QuickTeachDialog(QDialog):
     def _build_left(self):
         from PyQt6.QtWidgets import QWidget, QFrame
         box = QFrame()
-        box.setFixedWidth(210)
-        box.setStyleSheet("QFrame { background:#ffffff; border:1px solid #e2e8f0;"
-                          " border-radius:8px; }")
+        box.setObjectName("TeachLeftPanel")     # ★ 限定：不写裸 QFrame，否则内部 QLabel 也会被套边框 ✗
+        box.setFixedWidth(232)
+        box.setStyleSheet("QFrame#TeachLeftPanel { background:#FFFFFF;"
+                          " border:1px solid #DCE3EC; border-radius:10px; }")
         v = QVBoxLayout(box)
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(8)
@@ -306,10 +308,13 @@ class QuickTeachDialog(QDialog):
         p2 = QVBoxLayout(self.pane_void)
         p2.setContentsMargins(0, 0, 0, 0)
         p2.setSpacing(6)
-        p2.addWidget(create_info_label(
+        _hint2 = create_info_label(
             "左键点 2~3 个典型空洞\n（不用挑最黑的，边界的最准）\n\n"
-            "点错：按 Delete 删除"))
+            "点错：按 Delete 删除")
+        _hint2.setWordWrap(True)      # ✗ 不开换行，右栏窄的时候文字会被截断
+        p2.addWidget(_hint2)
         self.lbl_void = create_info_label("已点选 0 个")
+        self.lbl_void.setWordWrap(True)
         p2.addWidget(self.lbl_void)
         self.btn_clear = create_secondary_button("清空点选", self._clear_marks)
         p2.addWidget(self.btn_clear)

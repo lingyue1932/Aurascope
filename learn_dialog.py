@@ -59,8 +59,9 @@ class LearnReportDialog(QDialog):
 
         for name, rows, state in items:
             card = QFrame()
+            card.setObjectName("LearnCard")     # ★ 限定选择器 ✗ 否则内部 QLabel 也被套边框 ✗
             card.setStyleSheet(
-                "QFrame { background:#ffffff; border:1px solid #e2e8f0;"
+                "QFrame#LearnCard { background:#ffffff; border:1px solid #e2e8f0;"
                 " border-radius:8px; }")
             cv = QVBoxLayout(card)
             cv.setContentsMargins(12, 10, 12, 10)

@@ -27,15 +27,17 @@ from PyQt6.QtWidgets import (QDialog,QWidget, QVBoxLayout, QHBoxLayout, QFileDia
                              QProgressBar, QProgressDialog, QComboBox,
                              QListWidget, QListWidgetItem, QAbstractItemView, QGridLayout,
                              QSpinBox, QSplitter, QStackedWidget, QToolButton,
+                             QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
                              QApplication)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QSize
-from PyQt6.QtGui import QColor, QImage, QPixmap, QIcon
+from PyQt6.QtGui import QColor, QImage, QPixmap, QIcon, QPainter
 
 from canvas import ImageCanvas
 from image import (polygon_to_mask, otsu_threshold, locate_solder_band,
                    grab_local_dark_blob, learn_taught_model, apply_taught_model,
                    read_scale_bar, resample_polygon_points, two_class_threshold,
-                   annotate_result, make_thumb, render_summary_sheet)
+                   annotate_result, make_thumb, render_summary_sheet,
+                   render_solder_strip)
 from recipe import (list_recipes, load_recipe, save_taught, load_bar_template,
                     _recipe_root)
 from ui_components import (create_primary_button, create_secondary_button,
@@ -151,6 +153,46 @@ class BatchWorker(QThread):
             self.failed.emit(str(e))
 
 
+class _StripView(QGraphicsView):
+    """金锡拼接图预览控件：滚轮缩放、拖动平移、双击适应窗口"""
+
+    def __init__(self, rgb, parent=None):
+        super().__init__(parent)
+        rgb = np.ascontiguousarray(rgb)
+        qimg = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0],
+                      QImage.Format.Format_RGB888).copy()
+        self._pix = QPixmap.fromImage(qimg)
+        self._scene = QGraphicsScene(self)
+        self._item = QGraphicsPixmapItem(self._pix)
+        self._scene.addItem(self._item)
+        self.setScene(self._scene)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setBackgroundBrush(QColor(20, 20, 20))
+        self._fitted = False
+        self.setMinimumHeight(220)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self._fitted:
+            self._fit_view()
+            self._fitted = True
+
+    def _fit_view(self):
+        """整图适应窗口（宽图也能一眼看全，再滚轮放大看细节）"""
+        self.resetTransform()
+        self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def wheelEvent(self, e):
+        factor = 1.25 if e.angleDelta().y() > 0 else 1 / 1.25
+        self.scale(factor, factor)
+
+    def mouseDoubleClickEvent(self, e):
+        self._fit_view()
+
+
 class TeachBatchTab(QWidget):
     """示教学习 + 批量检测"""
 
@@ -251,11 +293,9 @@ class TeachBatchTab(QWidget):
         f = QFrame()
         f.setObjectName(obj_name)
         f.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 25))
-        f.setGraphicsEffect(shadow)
+        # ✗ 这里原来加了 QGraphicsDropShadowEffect(blur 30 / offset 0,4 / 黑 25)
+        #   结果是：面板紧挨分隔条时，投影在浅色底上变成一条**脏灰竖带**（用户截图里那条 ✗）
+        #   扁平风格的面板层次靠 1px 描边 + 底色差就够了 → 不再加投影 ✔
         return f
 
     @staticmethod
@@ -607,6 +647,18 @@ class TeachBatchTab(QWidget):
         self.btn_exp_sheet = create_success_button("导出汇总大图",
                                                    self.export_summary_sheet)
         exp.addWidget(self.btn_exp_sheet)
+        self.btn_exp_strip = create_success_button("导出金锡拼接图",
+                                                   self.export_solder_strip)
+        self.btn_exp_strip.setToolTip(
+            "把每张图的金锡区域抠出、按顺序横向拼成一张大图\n"
+            "区域外填黑，空洞仍用红色掩膜填充")
+        exp.addWidget(self.btn_exp_strip)
+        self.btn_view_strip = create_secondary_button("查看金锡拼接图",
+                                                       self.view_solder_strip)
+        self.btn_view_strip.setToolTip(
+            "在窗口内预览金锡拼接图（黑底，空洞红色填充）\n"
+            "支持缩放查看，也可另存为 PNG")
+        exp.addWidget(self.btn_view_strip)
         self.combo_sheet = QComboBox()
         self.combo_sheet.addItem("排版：纵向堆叠", "vertical")
         self.combo_sheet.addItem("排版：横向一行", "horizontal")
@@ -1660,6 +1712,118 @@ class TeachBatchTab(QWidget):
         if getattr(self, '_last_save_warning', ''):
             msg += "\n\n" + self._last_save_warning
         QMessageBox.information(self, "完成", msg)
+
+    def _build_solder_strip(self):
+        """重算每张图的金锡抠图并拼成横向大图；返回 (strip, err)"""
+        if not self.batch_results:
+            return None, "请先完成批量检测"
+        if not any(r.get('ok') for r in self.batch_results):
+            return None, "没有可导出的成功结果"
+        entries = []
+        for i, r in enumerate(self.batch_results):
+            img, res = self._rerun_result(i)
+            if img is None or res is None:
+                continue
+            entries.append({'img': img, 'band_mask': res['band_mask'],
+                            'voids': res['voids']})
+        strip = render_solder_strip(entries, self._summary_lines(for_sheet=True))
+        if strip is None:
+            return None, "金锡拼接图生成失败"
+        return strip, ''
+
+    def export_solder_strip(self):
+        """把每张图的金锡区域抠出、按顺序横向拼接成一张大图
+
+        区域外填黑（金锡多为浅色，黑底对比清晰），空洞仍用红色掩膜填充，
+        左上角标注与汇总大图一致的统计信息。
+        """
+        if not self.batch_results:
+            QMessageBox.information(self, "提示", "请先完成批量检测")
+            return
+        if not any(r.get('ok') for r in self.batch_results):
+            QMessageBox.warning(self, "提示", "没有可导出的成功结果")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出金锡拼接图",
+            f"Aurascope_solder_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+            "PNG 图片 (*.png)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            strip, err = self._build_solder_strip()
+            if strip is None:
+                QMessageBox.warning(self, "提示", err)
+                return
+            if not self._save_png(path, strip):
+                QMessageBox.warning(self, "金锡拼接图导出失败",
+                                    self._last_save_error or "写入失败")
+                return
+        finally:
+            QApplication.restoreOverrideCursor()
+        real = path if path.lower().endswith('.png') else path + '.png'
+        # 导出成功 → **顺便复制到剪贴板**（可直接 Ctrl+V 粘到 PPT/Word ✗）
+        from ui_components import copy_bgr_to_clipboard
+        ok_copy, why = copy_bgr_to_clipboard(strip, silent=True)
+        msg = (f"已导出金锡拼接图（{strip.shape[1]}×{strip.shape[0]}）\n{real}\n"
+               f"大小 {self._kb(real)}")
+        msg += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴 ✔" if ok_copy
+                else f"\n（复制到剪贴板失败：{why}）")
+        if getattr(self, '_last_save_warning', ''):
+            msg += "\n\n" + self._last_save_warning
+        QMessageBox.information(self, "完成", msg)
+
+    def view_solder_strip(self):
+        """在窗口内预览金锡拼接图（可缩放 / 可另存）"""
+        if not self.batch_results:
+            QMessageBox.information(self, "提示", "请先完成批量检测")
+            return
+        if not any(r.get('ok') for r in self.batch_results):
+            QMessageBox.warning(self, "提示", "没有可预览的成功结果")
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            strip, err = self._build_solder_strip()
+        finally:
+            QApplication.restoreOverrideCursor()
+        if strip is None:
+            QMessageBox.warning(self, "提示", err)
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("金锡拼接图预览")
+        dlg.resize(1040, 640)
+        lo = QVBoxLayout(dlg)
+        lo.setContentsMargins(12, 10, 12, 10)
+        lo.setSpacing(8)
+        bar = QHBoxLayout()
+        cap = QLabel(f"{strip.shape[1]} × {strip.shape[0]} px　"
+                     f"（共 {sum(1 for r in self.batch_results if r.get('ok'))} 张）"
+                     f"　滚轮缩放 · 拖动平移 · 双击适应窗口")
+        cap.setStyleSheet("font-size: 12px; color: #4a5568;")
+        bar.addWidget(cap)
+        bar.addStretch()
+        btn_save = create_success_button("另存为 PNG")
+        bar.addWidget(btn_save)
+        lo.addLayout(bar)
+        view = _StripView(cv2.cvtColor(strip, cv2.COLOR_BGR2RGB))
+        lo.addWidget(view, 1)
+
+        def _save():
+            path, _ = QFileDialog.getSaveFileName(
+                dlg, "另存金锡拼接图",
+                f"Aurascope_solder_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                "PNG 图片 (*.png)")
+            if not path:
+                return
+            if self._save_png(path, strip):
+                real = path if path.lower().endswith('.png') else path + '.png'
+                QMessageBox.information(dlg, "完成", f"已保存\n{real}")
+            else:
+                QMessageBox.warning(dlg, "保存失败",
+                                    self._last_save_error or "写入失败")
+
+        btn_save.clicked.connect(_save)
+        dlg.exec()
 
     def export_csv(self):
         if not self.batch_results:

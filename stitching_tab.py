@@ -121,8 +121,13 @@ class StitchingTab(QWidget):
         # ---- 导出 ----
         v.addWidget(create_step_title("4. 导出"))
         
-        btn_save = create_secondary_button("保存拼接图", self.save_stitched)
+        btn_save = create_secondary_button("保存拼接图（并复制）", self.save_stitched)
+        btn_save.setToolTip("导出 PNG/TIF 到磁盘，**同时**把拼接图放到剪贴板，"
+                            "可直接 Ctrl+V 粘到 PPT/Word")
         v.addWidget(btn_save)
+        btn_copy = create_secondary_button("仅复制到剪贴板", self.copy_to_clipboard)
+        btn_copy.setToolTip("不落盘，直接把拼接图复制到剪贴板（Ctrl+V 即可粘贴）")
+        v.addWidget(btn_copy)
         
         v.addStretch()
         
@@ -385,5 +390,47 @@ class StitchingTab(QWidget):
             tifffile.imwrite(path, self.canvas.stitched_image)
         else:
             cv2.imencode('.png', self.canvas.stitched_image)[1].tofile(path)
-        
-        QMessageBox.information(self, "成功", f"已保存到: {path}")
+
+        # 导出成功 → **顺便复制到剪贴板**（可直接 Ctrl+V 粘到 PPT/Word ✗）
+        ok_copy, why = self.copy_to_clipboard(silent=True)
+        tip = f"已保存到：{path}"
+        tip += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴到 PPT/Word ✔"
+                if ok_copy else f"\n（复制到剪贴板失败：{why}）")
+        QMessageBox.information(self, "成功", tip)
+
+    def copy_to_clipboard(self, silent=False):
+        """把拼接图复制到系统剪贴板（BGR/灰度 numpy → QImage）
+
+        Returns: (是否成功, 失败原因)
+        """
+        img = self.canvas.stitched_image
+        if img is None:
+            if not silent:
+                QMessageBox.information(self, "提示", "请先完成拼接")
+            return False, '尚未拼接'
+        try:
+            import numpy as np
+            from PyQt6.QtGui import QImage
+            from PyQt6.QtWidgets import QApplication
+            a = img
+            if a.ndim == 2:                                   # 灰度 → RGB
+                a = np.repeat(a[:, :, None], 3, axis=2)
+            elif a.shape[2] == 4:                             # BGRA → RGB
+                a = a[:, :, :3]
+            rgb = np.ascontiguousarray(a[:, :, ::-1])          # BGR → RGB
+            h, w = rgb.shape[:2]
+            q = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+            cb = QApplication.clipboard()
+            if cb is None:
+                return False, '剪贴板不可用'
+            cb.setImage(q)
+            if not silent:
+                QMessageBox.information(
+                    self, "已复制",
+                    f"拼接图（{w}×{h}）已复制到剪贴板，可直接 Ctrl+V 粘贴 ✔")
+            return True, ''
+        except Exception as e:
+            if not silent:
+                QMessageBox.warning(self, "提示", f"复制到剪贴板失败：{e}")
+            return False, f'{type(e).__name__}: {e}'
+

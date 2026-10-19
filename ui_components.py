@@ -199,3 +199,31 @@ def create_tool_buttons():
     layout.addWidget(btn_rect)
     
     return layout, btn_poly, btn_rect
+
+def copy_bgr_to_clipboard(img, silent=True):
+    """把 OpenCV 图像（BGR / 灰度 / BGRA numpy）复制到系统剪贴板
+
+    各功能公用（金锡拼接图导出、拼接 tab 等 ✗）。返回 (是否成功, 失败原因) ✔
+    """
+    if img is None:
+        return False, '没有图像'
+    try:
+        import numpy as np
+        from PyQt6.QtGui import QImage
+        from PyQt6.QtWidgets import QApplication
+        a = img
+        if a.ndim == 2:                       # 灰度 → RGB
+            a = np.repeat(a[:, :, None], 3, axis=2)
+        elif a.shape[2] == 4:                 # BGRA → BGR
+            a = a[:, :, :3]
+        rgb = np.ascontiguousarray(a[:, :, ::-1])          # BGR → RGB
+        h, w = rgb.shape[:2]
+        # .copy() 让 QImage 自己持有数据（否则 numpy 释放后花屏 ✗）
+        q = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+        cb = QApplication.clipboard()
+        if cb is None:
+            return False, '剪贴板不可用'
+        cb.setImage(q)
+        return True, ''
+    except Exception as e:
+        return False, f'{type(e).__name__}: {e}'

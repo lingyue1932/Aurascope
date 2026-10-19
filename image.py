@@ -1661,7 +1661,7 @@ def make_thumb(img_bgr, band_mask, voids, target_h=46):
 
 
 def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10,
-                         layout='vertical', cols=2, tile_h=340):
+                         layout='vertical', cols=2, tile_h=340, bg=None):
     """把所有图拼成"汇总大图"，顶部带汇总统计块
 
     Args:
@@ -1672,6 +1672,8 @@ def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10,
         layout: 'vertical' 纵向堆叠 | 'horizontal' 横向排一行 | 'grid' 网格(cols 列)
         cols: 网格列数
         tile_h: 横向模式下统一高度
+        bg: 间隙/表头/留白的背景灰度（None=沿用旧的浅灰235/白255；
+            传入时表头仍是深底白字，浅灰会被替换成该灰度）
     Returns:
         np.ndarray: 汇总大图（BGR）
     """
@@ -1707,10 +1709,11 @@ def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10,
             layout = 'vertical'
             warns.append('横向总宽超过 60000px，已自动改用纵向堆叠')
         else:
+            _bgc = 235 if bg is None else int(bg)
             parts = []
             for i, r in enumerate(row):
                 if i:
-                    parts.append(np.full((tile_h, gap, 3), 235, np.uint8))
+                    parts.append(np.full((tile_h, gap, 3), _bgc, np.uint8))
                 parts.append(r)
             body = np.hstack(parts)
             if any(w for _, w in tiles):
@@ -1762,15 +1765,110 @@ def render_summary_sheet(entries, summary_lines, sheet_width=1600, gap=10,
     out = []
     if summary_lines:
         lh = 10 + (18 + 7) * len(summary_lines)
-        header = np.full((lh, sheet_w, 3), 255, np.uint8)
+        _hbg = 255 if bg is None else int(bg)
+        header = np.full((lh, sheet_w, 3), _hbg, np.uint8)
         header = _draw_text_block(header, summary_lines, font_size=18)
         out.append(header)
-        out.append(np.full((gap, sheet_w, 3), 235, np.uint8))
+        out.append(np.full((gap, sheet_w, 3), 235 if bg is None else int(bg),
+                           np.uint8))
     if body.shape[1] != sheet_w:
         pad = np.full((body.shape[0], sheet_w - body.shape[1], 3), 235, np.uint8)
         body = np.hstack([body, pad]) if sheet_w > body.shape[1] else body
     out.append(body)
     return np.vstack(out)
+
+
+def crop_solder_region(img_bgr, band_mask, voids=None, pad=0, bg=(0, 0, 0)):
+    """把原图裁剪到金锡（焊层带）区域的外接矩形
+
+    区域外的像素一律填 bg（默认黑——金锡多为浅色，黑底出图更清晰），
+    空洞沿用现有的红色掩膜填充形式叠加。
+
+    Returns:
+        np.ndarray: 抠出的金锡区域图（BGR）；无有效区域时返回 None
+    """
+    if img_bgr is None or band_mask is None:
+        return None
+    if img_bgr.ndim == 2:
+        img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+    ys, xs = np.where(band_mask > 0)
+    if len(xs) == 0:
+        return None
+    h, w = img_bgr.shape[:2]
+    x0 = max(0, int(xs.min()) - pad)
+    y0 = max(0, int(ys.min()) - pad)
+    x1 = min(w - 1, int(xs.max()) + pad)
+    y1 = min(h - 1, int(ys.max()) + pad)
+    crop = img_bgr[y0:y1 + 1, x0:x1 + 1]
+    m = band_mask[y0:y1 + 1, x0:x1 + 1]
+    out = np.zeros_like(crop)
+    if tuple(bg) != (0, 0, 0):
+        out[:] = bg
+    sel = m > 0
+    out[sel] = crop[sel]
+    # 空洞红填充（与 annotate_result 同一套画法：整层叠加一次）
+    if voids:
+        void_layer = out.copy()
+        for v in voids:
+            pts = np.array(v['points'], dtype=np.int32).copy()
+            pts[:, 0] -= x0
+            pts[:, 1] -= y0
+            cv2.fillPoly(void_layer, [pts], (0, 0, 220))
+        out = cv2.addWeighted(void_layer, 0.40, out, 0.60, 0)
+    return out
+
+
+def render_solder_strip(entries, header_lines, gap=0, tile_h=None,
+                        bg=(64, 64, 64), max_width=60000):
+    """把每张图的金锡部分抠图后，按顺序横向拼接成一张大图
+
+    Args:
+        entries: [{'img','band_mask','voids'}...]（按检测顺序）
+        header_lines: 大图左上角标注文字（与汇总大图一致）
+        gap: 图间空隙（**默认 0 = 无缝衔接** ✗ 相邻金锡抠图紧贴）
+        tile_h: 统一高度；None 时按最高者对齐，其余居中以 bg 补空
+        bg: 空白填充色（**默认深灰 64**；原来纯黑，按需求改深灰 ✔）
+        max_width: 总宽上限，超出则整体等比缩小
+    Returns:
+        np.ndarray: 横向拼接大图（BGR）；无有效图时返回 None
+    """
+    crops = []
+    for e in entries:
+        c = crop_solder_region(e.get('img'), e.get('band_mask'),
+                               e.get('voids') or [], bg=bg)
+        if c is not None and c.size:
+            crops.append(c)
+    if not crops:
+        return None
+    if tile_h:
+        crops = [cv2.resize(
+            c, (max(1, int(round(c.shape[1] * tile_h / c.shape[0]))), tile_h),
+            interpolation=cv2.INTER_AREA) for c in crops]
+        H = tile_h
+    else:
+        H = max(c.shape[0] for c in crops)
+    parts = []
+    for i, c in enumerate(crops):
+        if c.shape[0] != H:                      # 居中补空
+            top = (H - c.shape[0]) // 2
+            bot = H - c.shape[0] - top
+            c = np.vstack([np.full((top, c.shape[1], 3), bg, np.uint8), c,
+                           np.full((bot, c.shape[1], 3), bg, np.uint8)])
+        if i:
+            parts.append(np.full((H, gap, 3), bg, np.uint8))
+        parts.append(c)
+    body = np.hstack(parts)
+    if body.shape[1] > max_width:                # 超宽整体等比缩小
+        s = max_width / body.shape[1]
+        body = cv2.resize(body, (max_width, max(1, int(round(body.shape[0] * s)))),
+                          interpolation=cv2.INTER_AREA)
+    if not header_lines:
+        return body
+    # 左上角标注：顶部黑色文字条（不遮挡金锡抠图）
+    lh = 10 + (18 + 7) * len(header_lines)
+    header = np.zeros((lh, body.shape[1], 3), np.uint8)
+    header = _draw_text_block(header, header_lines, font_size=18)
+    return np.vstack([header, np.full((gap, body.shape[1], 3), bg, np.uint8), body])
 
 
 def read_scale_bar(gray, template, model_bar, fallback_px_per_um=0.0):
