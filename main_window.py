@@ -1,6 +1,8 @@
 """主窗口类"""
 
 import copy
+import os
+
 import cv2
 import numpy as np
 import pandas as pd
@@ -13,11 +15,14 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGraphicsDropShadowEffect, QLabel, QPushButton, QSlider,
                              QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter,
                              QComboBox)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QIcon, QColor, QPixmap, QShortcut, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import (QColor, QDesktopServices, QIcon, QImage, QKeySequence,
+                         QPixmap, QShortcut)
 from PyQt6.QtWidgets import QApplication
 
 from styles import STYLESHEET, DIALOG_STYLESHEET
+from app_version import APP_VERSION
+from update_check import UpdateChecker
 from canvas import ImageCanvas
 from image import (extract_threshold_contour, contour_to_polygon,
                               polygon_to_mask, build_snap_edge_mask, detect_voids,
@@ -45,7 +50,7 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Aurascope V6   by: LINGYUE")
+        self.setWindowTitle(f"Aurascope V{APP_VERSION.rsplit('.', 1)[0]}   by: LINGYUE")
         self.resize(1000, 600)
         
         # 设置窗口图标
@@ -71,6 +76,11 @@ class MainWindow(QMainWindow):
         self.auto_roi_pending = False
 
         self.init_ui()
+
+        self.update_checker = UpdateChecker(self)
+        self.update_checker.update_found.connect(self._show_update_dialog)
+        if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+            QTimer.singleShot(1500, self.update_checker.check)
 
         # 统一修正下拉弹层（弹层是独立弹出窗口 ✗ 全局 QSS 命中不了 ✗）
         from ui_components import style_combo_popups
@@ -458,6 +468,20 @@ class MainWindow(QMainWindow):
         self.canvas.void_local_region_confirmed.connect(self.on_local_region_confirmed)
         self.canvas.void_local_threshold_changed.connect(self.on_local_threshold_changed)
         self.canvas.void_local_region_removed.connect(self.on_local_region_removed)
+
+    def _show_update_dialog(self, info):
+        notes = (info.get('notes') or '').strip()
+        detail = f"发现新版本 {info.get('tag', '')}\n\n{notes}" if notes else \
+            f"发现新版本 {info.get('tag', '')}"
+        box = QMessageBox(self)
+        box.setWindowTitle('发现新版本')
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(detail)
+        go = box.addButton('前往下载', QMessageBox.ButtonRole.AcceptRole)
+        box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is go and info.get('url'):
+            QDesktopServices.openUrl(QUrl(info['url']))
 
     def toggle_steps(self, enabled):
         """切换步骤启用状态"""
