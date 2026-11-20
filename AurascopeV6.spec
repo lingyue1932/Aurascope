@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AurascopeV6.1',
+    name='AurascopeV6.2',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
