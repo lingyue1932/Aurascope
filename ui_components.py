@@ -155,31 +155,60 @@ def create_count_result(text=""):
 
 
 class CollapsibleSection(QWidget):
-    """可折叠区域组件"""
+    """可折叠区域：头部为标题+方向箭头，点击整行切换，内容随状态显示。"""
     def __init__(self, title="高级设置", parent=None):
         super().__init__(parent)
-        self._toggled = False
+        self._title = title
+        self._expanded = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(2)
 
-        self.toggle_btn = QPushButton(f"{title}")
-        self.toggle_btn.setObjectName("SecondaryBtn")
-        self.toggle_btn.setCheckable(True)
-        self.toggle_btn.clicked.connect(self._toggle)
+        self.toggle_btn = QPushButton()
+        self.toggle_btn.setObjectName("CollapseHeader")
+        self.toggle_btn.setCheckable(False)
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.toggle_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.toggle_btn.setStyleSheet(
+            "QPushButton#CollapseHeader {"
+            "  background: transparent;"
+            "  border: 1px solid transparent;"
+            "  border-radius: 6px;"
+            "  color: #334155;"
+            "  font-weight: 600;"
+            "  text-align: left;"
+            "  padding: 8px 10px;"
+            "}"
+            "QPushButton#CollapseHeader:hover { background: #e8edf4; }"
+            "QPushButton#CollapseHeader:pressed { background: #dde5ef; }"
+            "QPushButton#CollapseHeader:focus { border: 1px solid #3b82f6; }")
+        self.toggle_btn.clicked.connect(self.toggle)
         layout.addWidget(self.toggle_btn)
 
         self.container = QWidget()
-        self.container.setVisible(False)
+        self.container.setObjectName("CollapseBody")
         self._container_layout = QVBoxLayout(self.container)
-        self._container_layout.setContentsMargins(8, 8, 8, 4)
-        self._container_layout.setSpacing(8)
+        self._container_layout.setContentsMargins(10, 2, 10, 10)
+        self._container_layout.setSpacing(6)
         layout.addWidget(self.container)
 
-    def _toggle(self):
-        self._toggled = not self._toggled
-        self.container.setVisible(self._toggled)
-        # self.toggle_btn.setText(f"▾ {self.toggle_btn.text()[2:]}" if self._toggled else f"{self.toggle_btn.text()[2:]}")
+        self.setExpanded(False)
+
+    def _refresh_header(self):
+        arrow = '▼' if self._expanded else '▲'
+        self.toggle_btn.setText(f"{arrow}  {self._title}")
+        self.toggle_btn.setAccessibleName(self._title)
+
+    def setExpanded(self, expanded):
+        self._expanded = bool(expanded)
+        self._refresh_header()
+        self.container.setVisible(self._expanded)
+
+    def toggle(self):
+        self.setExpanded(not self._expanded)
+
+    def isExpanded(self):
+        return self._expanded
 
     def addWidget(self, widget):
         self._container_layout.addWidget(widget)
@@ -227,3 +256,40 @@ def copy_bgr_to_clipboard(img, silent=True):
         return True, ''
     except Exception as e:
         return False, f'{type(e).__name__}: {e}'
+
+
+def style_combo_popups(widget):
+    """把下拉弹层的样式直接套到每个 QComboBox 的视图上
+
+    为什么必须这么做 ✗：QComboBox 的弹层是**独立弹出窗口** ✗，
+    全局 QSS 的 `QComboBox QAbstractItemView{…}` 在某些风格下命中不了 ✗
+    → 会露出原生的灰框选中项、滚动条箭头、裁切 ✗
+    直接 setStyleSheet 到 view() 上是唯一 100% 生效的写法 ✔
+    """
+    from PyQt6.QtWidgets import QComboBox
+    from styles import POPUP_QSS
+    try:
+        combos = widget.findChildren(QComboBox)
+    except Exception:
+        return 0
+    # 原生焦点框（选中项外面那圈灰线 ✗）是 Qt style 画的 ✗ QSS 管不到
+    # → 用委托把 State_HasFocus 去掉 ✔
+    from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
+
+    class _NoFocusDelegate(QStyledItemDelegate):
+        def paint(self, painter, option, index):
+            opt = QStyleOptionViewItem(option)
+            opt.state &= ~QStyle.StateFlag.State_HasFocus
+            super().paint(painter, opt, index)
+
+    for cb in combos:
+        try:
+            cb.setItemDelegate(_NoFocusDelegate(cb))
+            cb.view().setStyleSheet(POPUP_QSS)
+            n = cb.count()
+            if n:
+                # 弹层高度按项数兜底 ✗ 否则 QSS 改了行高但 sizeHint 没变 → 裁切 ✗
+                cb.view().setMinimumHeight(min(n, 12) * 27 + 10)
+        except Exception:
+            pass
+    return len(combos)

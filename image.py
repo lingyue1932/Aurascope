@@ -422,6 +422,72 @@ def detect_voids_local(gray_img, roi_mask, global_thresh_val, local_regions=None
     return voids_data
 
 
+def detect_defects(gray, thresh_val, bright=True, min_area=1, roi_mask=None):
+    """按 8 邻域检测缺陷，返回精确像素面积及 bbox 局部掩膜。
+
+    gray 必须为非空二维 uint8；ROI 必须同形、uint8 且仅含 0/255。
+    thresh_val 为 [0, 255] 实数；bright 为布尔值，True 检测 > 阈值，
+    False 检测 <= 阈值。min_area 为有限非负实数，面积等于下限时保留。
+    非法输入抛 ValueError；不修改输入。无 ROI 时检测全图。
+
+    返回字典列表：id 从 1 连续编号，area_px 为 CC_STAT_AREA，cx/cy
+    为像素质心，rect=(x,y,w,h)，points 为全图坐标的最大外轮廓。
+    mask 为 (h,w) uint8 的 0/255 掩膜，保留孔洞且不混入其他连通域。
+    """
+    if (not isinstance(gray, np.ndarray) or gray.ndim != 2
+            or gray.dtype != np.uint8 or gray.size == 0):
+        raise ValueError('gray 必须是非空二维 uint8 数组')
+
+    numeric_types = (int, float, np.integer, np.floating)
+    if (isinstance(thresh_val, (bool, np.bool_))
+            or not isinstance(thresh_val, numeric_types)
+            or not 0 <= thresh_val <= 255):
+        raise ValueError('thresh_val 必须是 [0, 255] 内的有限实数')
+    if not isinstance(bright, (bool, np.bool_)):
+        raise ValueError('bright 必须是布尔值')
+    if (isinstance(min_area, (bool, np.bool_))
+            or not isinstance(min_area, numeric_types)
+            or not 0 <= min_area < float('inf')):
+        raise ValueError('min_area 必须是有限非负实数')
+    if roi_mask is not None:
+        if (not isinstance(roi_mask, np.ndarray)
+                or roi_mask.shape != gray.shape or roi_mask.dtype != np.uint8
+                or not np.all((roi_mask == 0) | (roi_mask == 255))):
+            raise ValueError('roi_mask 必须是与 gray 同形且仅含 0/255 的 uint8 数组')
+
+    threshold_type = cv2.THRESH_BINARY if bright else cv2.THRESH_BINARY_INV
+    _, binary = cv2.threshold(gray, float(thresh_val), 255, threshold_type)
+    if roi_mask is not None:
+        binary = cv2.bitwise_and(binary, roi_mask)
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        binary, connectivity=8)
+
+    objects = []
+    for label in range(1, count):
+        if label % 10 == 0:
+            _pump_events()
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < min_area:
+            continue
+        x, y, w, h = map(int, stats[label, :4])
+        # 只比较 bbox 内的标签，避免为每个连通域分配整幅掩膜。
+        local_mask = (labels[y:y + h, x:x + w] == label).astype(np.uint8) * 255
+        contours, _ = cv2.findContours(
+            local_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        points = max(contours, key=cv2.contourArea).reshape(-1, 2)
+        points += (x, y)
+        objects.append({
+            'id': len(objects) + 1,
+            'area_px': area,
+            'cx': float(centroids[label, 0]),
+            'cy': float(centroids[label, 1]),
+            'rect': (x, y, w, h),
+            'points': points.tolist(),
+            'mask': local_mask,
+        })
+    return objects
+
+
 def detect_objects(gray_img,
                    thresh_val,
                    min_area=1,
