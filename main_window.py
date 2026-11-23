@@ -15,14 +15,14 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGraphicsDropShadowEffect, QLabel, QPushButton, QSlider,
                              QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter,
                              QComboBox)
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QSettings, QTimer, QUrl
 from PyQt6.QtGui import (QColor, QDesktopServices, QIcon, QImage, QKeySequence,
                          QPixmap, QShortcut)
 from PyQt6.QtWidgets import QApplication
 
 from styles import STYLESHEET, DIALOG_STYLESHEET
 from app_version import APP_VERSION
-from update_check import UpdateChecker
+from update_check import UpdateChecker, should_show_update
 from canvas import ImageCanvas
 from image import (extract_threshold_contour, contour_to_polygon,
                               polygon_to_mask, build_snap_edge_mask, detect_voids,
@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
 
         self.update_checker = UpdateChecker(self)
-        self.update_checker.update_found.connect(self._show_update_dialog)
+        self.update_checker.update_found.connect(self._on_update_found)
         if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
             QTimer.singleShot(1500, self.update_checker.check)
 
@@ -469,6 +469,15 @@ class MainWindow(QMainWindow):
         self.canvas.void_local_threshold_changed.connect(self.on_local_threshold_changed)
         self.canvas.void_local_region_removed.connect(self.on_local_region_removed)
 
+    def _skipped_update_version(self):
+        settings = QSettings('Aurascope', 'Aurascope')
+        return settings.value('update/skipped_version', '', str)
+
+    def _on_update_found(self, info):
+        if not should_show_update(info, self._skipped_update_version()):
+            return
+        self._show_update_dialog(info)
+
     def _show_update_dialog(self, info):
         notes = (info.get('notes') or '').strip()
         detail = f"发现新版本 {info.get('tag', '')}\n\n{notes}" if notes else \
@@ -478,10 +487,15 @@ class MainWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.Information)
         box.setText(detail)
         go = box.addButton('前往下载', QMessageBox.ButtonRole.AcceptRole)
+        skip = box.addButton('忽略本次更新', QMessageBox.ButtonRole.ActionRole)
         box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
         box.exec()
-        if box.clickedButton() is go and info.get('url'):
+        clicked = box.clickedButton()
+        if clicked is go and info.get('url'):
             QDesktopServices.openUrl(QUrl(info['url']))
+        elif clicked is skip:
+            QSettings('Aurascope', 'Aurascope').setValue(
+                'update/skipped_version', info.get('version'))
 
     def toggle_steps(self, enabled):
         """切换步骤启用状态"""

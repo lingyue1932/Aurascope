@@ -41,6 +41,17 @@ def release_is_newer(tag, current=APP_VERSION):
         return False
 
 
+def should_show_update(info, skipped_version=None):
+    """用户“忽略本次更新”后，同版本不再提示；更高版本照常提示。"""
+    if not skipped_version:
+        return True
+    current = parse_release_tag((info or {}).get('version') or '')
+    skipped = parse_release_tag(skipped_version)
+    if current is None or skipped is None:
+        return True
+    return current.base_version != skipped.base_version
+
+
 def parse_latest_release(payload):
     """从 GitHub latest release JSON 提取版本/链接/说明；跳过 draft 与 prerelease。"""
     if not isinstance(payload, dict):

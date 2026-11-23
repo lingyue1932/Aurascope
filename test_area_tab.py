@@ -1586,6 +1586,17 @@ class AreaUITests(unittest.TestCase):
         self.tab.canvas.leaveEvent(QEvent(QEvent.Type.Leave))
         self.assertEqual(self.tab.canvas.hovered_distance_index, -1)
 
+    def test_roi_action_buttons_are_two_by_two(self):
+        self.app.processEvents()
+        rect, poly = self.tab.btn_roi_rect, self.tab.btn_roi_poly
+        delete, clear = self.tab.btn_delete_roi, self.tab.btn_clear_roi
+        self.assertEqual(rect.y(), poly.y(), '矩形/多边形应在同一行')
+        self.assertLess(rect.x(), poly.x())
+        self.assertEqual(delete.y(), clear.y(), '删除/清空应在同一行')
+        self.assertLess(delete.x(), clear.x())
+        self.assertLess(rect.y(), delete.y(), '两行上下排列')
+        self.assertAlmostEqual(rect.width(), poly.width(), delta=2)
+
     def test_main_window_has_six_tabs_with_roi_combined(self):
         with patch.dict(os.environ, {'AURASCOPE_RECIPE_DIR': str(self.root / 'recipes')}):
             from main_window import MainWindow

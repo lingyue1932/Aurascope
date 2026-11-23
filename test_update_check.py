@@ -25,6 +25,16 @@ class UpdateCheckLogicTests(unittest.TestCase):
         self.assertFalse(update_check.release_is_newer('v6.1.0-beta', current='6.1.0'))
         self.assertFalse(update_check.release_is_newer('not-a-version', current='6.1.0'))
 
+    def test_should_show_update_respects_skipped_version(self):
+        info = {'version': '6.3.0', 'tag': 'v6.3.0', 'url': '', 'notes': ''}
+        self.assertTrue(update_check.should_show_update(info, None))
+        self.assertTrue(update_check.should_show_update(info, ''))
+        self.assertTrue(update_check.should_show_update(info, '6.2.0'))
+        self.assertTrue(update_check.should_show_update(info, 'v6.2.0'))
+        self.assertFalse(update_check.should_show_update(info, '6.3.0'))
+        self.assertFalse(update_check.should_show_update(info, 'v6.3.0'))
+        self.assertFalse(update_check.should_show_update(info, '6.3.0+meta'))
+
     def test_parse_latest_release_extracts_fields(self):
         info = update_check.parse_latest_release({
             'tag_name': 'v6.2.0',

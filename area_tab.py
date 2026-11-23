@@ -13,7 +13,7 @@ import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QDialog,
                              QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-                             QFormLayout, QFrame, QHeaderView, QLabel,
+                             QFormLayout, QFrame, QHBoxLayout, QHeaderView, QLabel,
                              QScrollArea, QSpinBox, QSplitter, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -221,12 +221,22 @@ class DefectAreaTab(QWidget):
         self.btn_export_distances = create_secondary_button('导出距离 CSV', lambda: self.export_distance_csv())
         distance.addWidget(self.btn_export_distances)
         roi = group('检测区域', expanded=True)
-        self.btn_roi_rect = tool(roi, '矩形框选', 'rect')
-        self.btn_roi_poly = tool(roi, '多边形框选', 'poly')
+        roi_row1 = QHBoxLayout()
+        roi_row1.setSpacing(8)
+        self.btn_roi_rect = tool(roi_row1, '矩形框选', 'rect')
+        self.btn_roi_poly = tool(roi_row1, '多边形框选', 'poly')
+        roi_row1.setStretch(0, 1)
+        roi_row1.setStretch(1, 1)
+        roi.addLayout(roi_row1)
+        roi_row2 = QHBoxLayout()
+        roi_row2.setSpacing(8)
         self.btn_delete_roi = create_secondary_button('删除当前 ROI', self.delete_current_roi)
-        roi.addWidget(self.btn_delete_roi)
         self.btn_clear_roi = create_secondary_button('清空全部 ROI', self.clear_roi)
-        roi.addWidget(self.btn_clear_roi)
+        roi_row2.addWidget(self.btn_delete_roi)
+        roi_row2.addWidget(self.btn_clear_roi)
+        roi_row2.setStretch(0, 1)
+        roi_row2.setStretch(1, 1)
+        roi.addLayout(roi_row2)
         detection = group('阈值检测', expanded=True)
         self.lbl_current_roi = create_info_label('当前 ROI：未选择')
         detection.addWidget(self.lbl_current_roi)
