@@ -8,11 +8,10 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
                              QFrame, QScrollArea, QLabel, QTableWidget,
                              QTableWidgetItem, QHeaderView, QInputDialog,
-                             QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
+                             QMessageBox, QSizePolicy,
                              QSpinBox, QSlider, QListWidget, QListWidgetItem,
                              QAbstractItemView, QSplitter)
 from PyQt6.QtCore import Qt, QItemSelection
-from PyQt6.QtGui import QColor
 
 from ui_components import (create_primary_button, create_secondary_button,
                            create_success_button, create_danger_button,
@@ -47,15 +46,9 @@ class StitchingTab(QWidget):
         """构建侧边栏"""
         sidebar = QFrame()
         sidebar.setObjectName("SidebarCard")
-        sidebar.setMinimumWidth(320)
+        sidebar.setMinimumWidth(280)
         sidebar.setMaximumWidth(420)
         sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 25))
-        sidebar.setGraphicsEffect(shadow)
         
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -64,8 +57,8 @@ class StitchingTab(QWidget):
         
         content = QWidget()
         v = QVBoxLayout(content)
-        v.setContentsMargins(24, 24, 24, 24)
-        v.setSpacing(12)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(14)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         # ---- 导入图像 ----
@@ -122,7 +115,7 @@ class StitchingTab(QWidget):
         v.addWidget(create_step_title("4. 导出"))
         
         btn_save = create_secondary_button("保存拼接图（并复制）", self.save_stitched)
-        btn_save.setToolTip("导出 PNG/TIF 到磁盘，**同时**把拼接图放到剪贴板，"
+        btn_save.setToolTip("导出 PNG/TIF 到磁盘，同时把拼接图放到剪贴板，"
                             "可直接 Ctrl+V 粘到 PPT/Word")
         v.addWidget(btn_save)
         btn_copy = create_secondary_button("仅复制到剪贴板", self.copy_to_clipboard)
@@ -365,7 +358,7 @@ class StitchingTab(QWidget):
         main_window = self.window()
         if hasattr(main_window, 'set_stitching_result'):
             main_window.set_stitching_result(self.canvas.stitched_image, None)
-            main_window.tab_widget.setCurrentIndex(0)
+            main_window.tab_widget.setCurrentWidget(main_window.analysis_tab)
             QMessageBox.information(self, "成功", "已发送到空洞分析模块")
     
     # ========== 导出 ==========
@@ -394,7 +387,7 @@ class StitchingTab(QWidget):
         # 导出成功 → **顺便复制到剪贴板**（可直接 Ctrl+V 粘到 PPT/Word ✗）
         ok_copy, why = self.copy_to_clipboard(silent=True)
         tip = f"已保存到：{path}"
-        tip += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴到 PPT/Word ✔"
+        tip += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴到 PPT/Word √"
                 if ok_copy else f"\n（复制到剪贴板失败：{why}）")
         QMessageBox.information(self, "成功", tip)
 
@@ -427,7 +420,7 @@ class StitchingTab(QWidget):
             if not silent:
                 QMessageBox.information(
                     self, "已复制",
-                    f"拼接图（{w}×{h}）已复制到剪贴板，可直接 Ctrl+V 粘贴 ✔")
+                    f"拼接图（{w}×{h}）已复制到剪贴板，可直接 Ctrl+V 粘贴 √")
             return True, ''
         except Exception as e:
             if not silent:

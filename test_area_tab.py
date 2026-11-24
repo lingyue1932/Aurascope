@@ -1597,6 +1597,13 @@ class AreaUITests(unittest.TestCase):
         self.assertLess(rect.y(), delete.y(), '两行上下排列')
         self.assertAlmostEqual(rect.width(), poly.width(), delta=2)
 
+    def test_collapsible_body_has_card_border_style(self):
+        from styles import STYLESHEET
+        self.assertIn('QWidget#CollapseBody', STYLESHEET)
+        body = self.tab.sections['比例尺标定'].container
+        self.assertEqual(body.objectName(), 'CollapseBody')
+        self.assertTrue(body.isVisible())
+
     def test_main_window_has_six_tabs_with_roi_combined(self):
         with patch.dict(os.environ, {'AURASCOPE_RECIPE_DIR': str(self.root / 'recipes')}):
             from main_window import MainWindow
@@ -1605,9 +1612,9 @@ class AreaUITests(unittest.TestCase):
                 tabs = window.tab_widget
                 self.assertEqual(tabs.count(), 6)
                 self.assertEqual([tabs.tabText(i).strip() for i in range(6)],
-                                 ['空洞分析', '示教/批量', '剪切力计算',
-                                  '物料计数', 'ROI', '图像拼接'])
-                self.assertIs(tabs.widget(4), window.area_tab)
+                                 ['ROI', '空洞分析', '示教/批量', '剪切力计算',
+                                  '物料计数', '图像拼接'])
+                self.assertIs(tabs.widget(0), window.area_tab)
                 self.assertFalse(hasattr(window, 'measure_tab'))
             finally:
                 window.close()

@@ -12,11 +12,11 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QFileDialog, QTableWidget, QTableWidgetItem,
                              QHeaderView, QDialog, QInputDialog, QFrame,
                              QMessageBox, QScrollArea, QSizePolicy,
-                             QGraphicsDropShadowEffect, QLabel, QPushButton, QSlider,
+                             QLabel, QSlider,
                              QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter,
                              QComboBox)
 from PyQt6.QtCore import Qt, QSettings, QTimer, QUrl
-from PyQt6.QtGui import (QColor, QDesktopServices, QIcon, QImage, QKeySequence,
+from PyQt6.QtGui import (QDesktopServices, QIcon, QImage, QKeySequence,
                          QPixmap, QShortcut)
 from PyQt6.QtWidgets import QApplication
 
@@ -91,8 +91,12 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
 
-        # Tab 1: 空洞分析
-        analysis_tab = QWidget()
+        # Tab 1: ROI（缺陷面积，默认首页）
+        self.area_tab = DefectAreaTab()
+        self.tab_widget.addTab(self.area_tab, '    ROI    ')
+
+        # Tab 2: 空洞分析
+        self.analysis_tab = analysis_tab = QWidget()
         analysis_layout = QHBoxLayout(analysis_tab)
         analysis_layout.setContentsMargins(16, 16, 16, 16)
         analysis_layout.setSpacing(0)
@@ -111,26 +115,19 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(analysis_tab, "    空洞分析    ")
 
-        # Tab 1.5: 示教与批量检测
+        # Tab 3: 示教与批量检测
         self.teach_batch_tab = TeachBatchTab()
         self.tab_widget.addTab(self.teach_batch_tab, "    示教/批量    ")
 
-        # Tab 2: 距离测量（已并入 ROI Tab，暂停挂载）
-        # self.measure_tab = MeasureTab()
-        # self.tab_widget.addTab(self.measure_tab, "    距离测量    ")
-
-        # Tab 3: 剪切力计算
+        # Tab 4: 剪切力计算
         self.shear_tab = ShearTab()
         self.tab_widget.addTab(self.shear_tab, "    剪切力计算    ")
 
-        # Tab 4: 物料计数
+        # Tab 5: 物料计数
         self.counting_tab = CountingTab()
         self.tab_widget.addTab(self.counting_tab, "    物料计数    ")
 
-        self.area_tab = DefectAreaTab()
-        self.tab_widget.addTab(self.area_tab, '    ROI    ')
-
-        # Tab 5: 图像拼接
+        # Tab 6: 图像拼接
         self.stitching_tab = StitchingTab()
         self.tab_widget.addTab(self.stitching_tab, "    图像拼接    ")
 
@@ -170,15 +167,10 @@ class MainWindow(QMainWindow):
         """创建侧边栏"""
         sidebar = QFrame()
         sidebar.setObjectName("SidebarCard")
-        sidebar.setMinimumWidth(320)
+        sidebar.setMinimumWidth(280)
         sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
-        # 阴影效果
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 25))
-        sidebar.setGraphicsEffect(shadow)
+        # 扁平风格：层次靠 1px 描边 + 底色差，不加投影（投影会在分隔条旁形成脏灰竖带）
 
         # 滚动区域
         scroll_area = QScrollArea()
@@ -290,9 +282,7 @@ class MainWindow(QMainWindow):
         self.btn_auto_roi = create_primary_button("一键自动 ROI", self.start_auto_roi)
         self.btn_auto_roi.setToolTip("在图上拖出焊料大致区域，自动提取边界多边形，之后可微调顶点")
         vbox.addWidget(self.btn_auto_roi)
-        self.lbl_auto_roi_tip = QLabel("请在图上拖出焊料大致区域")
-        self.lbl_auto_roi_tip.setWordWrap(True)
-        self.lbl_auto_roi_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        self.lbl_auto_roi_tip = create_info_label("请在图上拖出焊料大致区域")
         self.lbl_auto_roi_tip.setVisible(False)
         vbox.addWidget(self.lbl_auto_roi_tip)
 
@@ -303,9 +293,7 @@ class MainWindow(QMainWindow):
         self.slider_vertices, _ = create_slider_with_label(
             3, 120, 24, self.on_vertex_count_changed)
         self.chk_snap_edge = create_checkbox("Snap to edge", False, self.toggle_snap_edges)
-        self.lbl_edit_tip = QLabel("双击边新增顶点 · Delete 删除选中")
-        self.lbl_edit_tip.setWordWrap(True)
-        self.lbl_edit_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        self.lbl_edit_tip = create_info_label("双击边新增顶点 · Delete 删除选中")
         self.chk_roi_overlay = create_checkbox("选区绿色蒙版", True, self.toggle_roi_overlay)
 
         adv.addWidget(self.lbl_vertex_val)
@@ -373,9 +361,8 @@ class MainWindow(QMainWindow):
         edit_row.addWidget(self.btn_void_undo)
         vbox.addLayout(edit_row)
 
-        self.lbl_add_tip = QLabel("点击空洞内部 → 局部 Otsu 自动检测\nCtrl+滚轮调阈值偏移 → 双击确认")
-        self.lbl_add_tip.setWordWrap(True)
-        self.lbl_add_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        self.lbl_add_tip = create_info_label(
+            "点击空洞内部 → 局部 Otsu 自动检测\nCtrl+滚轮调阈值偏移 → 双击确认")
         self.lbl_add_tip.setVisible(False)
         vbox.addWidget(self.lbl_add_tip)
 
@@ -436,15 +423,12 @@ class MainWindow(QMainWindow):
         self.enhanced_widgets.setVisible(True)
         adv.addWidget(self.enhanced_widgets)
 
-        self.btn_void_local = QPushButton("局部阈值调节")
-        self.btn_void_local.setObjectName("SecondaryBtn")
-        self.btn_void_local.setCheckable(True)
-        self.btn_void_local.clicked.connect(self.toggle_void_selection_mode)
+        self.btn_void_local = create_secondary_button(
+            "局部阈值调节", self.toggle_void_selection_mode, checkable=True)
         adv.addWidget(self.btn_void_local)
 
-        self.lbl_local_tip = QLabel("单击放置 → 滚轮调半径 → 双击确认\nShift+滚轮调阈值 · 右键双击删除")
-        self.lbl_local_tip.setWordWrap(True)
-        self.lbl_local_tip.setStyleSheet("color: #718096; font-size: 12px;")
+        self.lbl_local_tip = create_info_label(
+            "单击放置 → 滚轮调半径 → 双击确认\nShift+滚轮调阈值 · 右键双击删除")
         adv.addWidget(self.lbl_local_tip)
 
         btn_restore = create_danger_button("恢复默认设置")

@@ -6,8 +6,10 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QScrollArea, QWidget, QFrame)
 
-from ui_components import (create_primary_button, create_step_title,
-                           create_info_label)
+from styles import DIALOG_STYLESHEET
+from ui_components import (create_primary_button, create_info_label,
+                           create_success_label, create_error_label,
+                           create_blue_label)
 
 
 class LearnReportDialog(QDialog):
@@ -21,11 +23,11 @@ class LearnReportDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(680, 620)
-        self.setStyleSheet("QDialog { background: #f0f4f8; }")
+        self.setStyleSheet(DIALOG_STYLESHEET)
 
         lo = QVBoxLayout(self)
         lo.setContentsMargins(16, 16, 16, 16)
-        lo.setSpacing(10)
+        lo.setSpacing(12)
 
         # head = QLabel("学习做完了哪些事、得到了什么参数")
         # head.setStyleSheet("font-size: 15px; font-weight: 600; color: #2d3748;")
@@ -40,42 +42,32 @@ class LearnReportDialog(QDialog):
         host = QWidget()
         hv = QVBoxLayout(host)
         hv.setContentsMargins(0, 0, 6, 0)
-        hv.setSpacing(10)
+        hv.setSpacing(12)
         hv.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         if preview is not None:
-            cap = QLabel("学习结果叠加（绿=焊层区域，红框=空洞）")
-            cap.setStyleSheet("color:#718096; font-size:12px;")
-            hv.addWidget(cap)
+            hv.addWidget(create_info_label("学习结果叠加（绿=焊层区域，红框=空洞）"))
             pic = QLabel()
+            pic.setObjectName("ImagePreview")
             pix = preview if isinstance(preview, QPixmap) else QPixmap.fromImage(preview)
             pic.setPixmap(pix.scaledToWidth(
                 min(620, max(320, pix.width())),
                 Qt.TransformationMode.SmoothTransformation))
             pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            pic.setStyleSheet("background:#ffffff; border:1px solid #e2e8f0;"
-                              " border-radius:6px; padding:4px;")
             hv.addWidget(pic)
 
         for name, rows, state in items:
             card = QFrame()
-            card.setObjectName("LearnCard")     # ★ 限定选择器 ✗ 否则内部 QLabel 也被套边框 ✗
-            card.setStyleSheet(
-                "QFrame#LearnCard { background:#ffffff; border:1px solid #e2e8f0;"
-                " border-radius:8px; }")
+            card.setObjectName("SidebarCard")
             cv = QVBoxLayout(card)
             cv.setContentsMargins(12, 10, 12, 10)
             cv.setSpacing(4)
-            mark = {'ok': '✔', 'warn': '⚠', 'info': '·'}.get(state, '·')
-            color = {'ok': '#0F6E56', 'warn': '#A32D2D'}.get(state, '#2d3748')
-            t = QLabel(f"{mark} {name}")
-            t.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {color};")
-            cv.addWidget(t)
+            mark = {'ok': '√', 'warn': '!', 'info': '·'}.get(state, '·')
+            factory = {'ok': create_success_label,
+                       'warn': create_error_label}.get(state, create_blue_label)
+            cv.addWidget(factory(f"{mark} {name}"))
             for r in rows:
-                lb = QLabel(r)
-                lb.setWordWrap(True)
-                lb.setStyleSheet("color:#4a5568; font-size:12px;")
-                cv.addWidget(lb)
+                cv.addWidget(create_info_label(r))
             hv.addWidget(card)
 
         scroll.setWidget(host)
@@ -114,7 +106,7 @@ def build_learn_items(model, extra=None):
             f"两类可分性 = {sep}（<1.5 示范不够典型，建议重画区域或补点空洞）"]
     sf = diag.get('bg_same_gray_frac') or 0
     if sf > 0.2:
-        rows.append(f"⚠ 周边有 {sf * 100:.0f}% 的像素与焊料同灰度，已自动剔除"
+        rows.append(f"注意：周边有 {sf * 100:.0f}% 的像素与焊料同灰度，已自动剔除"
                     f"（这类像素若混进背景类会把阈值推高）")
     items.append(("焊层 / 背景两类分离",
                   rows, 'warn' if (sep is not None and sep < 1.5) else 'ok'))

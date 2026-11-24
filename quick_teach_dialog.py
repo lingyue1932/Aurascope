@@ -24,9 +24,8 @@ import numpy as np
 import cv2
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QMessageBox, QSizePolicy, QCheckBox, QLineEdit,
-                             QListWidget, QListWidgetItem, QAbstractItemView,
-                             QPushButton)
+                             QMessageBox, QSizePolicy, QLineEdit, QInputDialog,
+                             QListWidget, QListWidgetItem, QAbstractItemView)
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QImage, QPixmap, QIcon
 
@@ -35,7 +34,8 @@ from image import (locate_solder_band, polygon_to_mask, grab_local_dark_blob,
                    learn_taught_model, apply_taught_model)
 from recipe import save_taught, list_recipes
 from ui_components import (create_primary_button, create_secondary_button,
-                           create_success_button, create_info_label)
+                           create_success_button, create_nav_button,
+                           create_checkbox, create_info_label)
 from styles import STYLESHEET
 
 
@@ -60,8 +60,8 @@ class ImagePickerDialog(QDialog):
         self._loader = thumb_loader or _default_thumb
         self._chosen = current
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(12, 10, 12, 10)
-        lo.setSpacing(8)
+        lo.setContentsMargins(16, 16, 16, 16)
+        lo.setSpacing(12)
         lb = create_info_label('点一张作为示教基准图（双击直接选用）。'
                                '★ = 系统自动挑的那张。')
         lb.setWordWrap(True)
@@ -185,6 +185,8 @@ class QuickTeachDialog(QDialog):
         self.blobs = []              # 点选抓到的暗核掩码
         self.model = None
         self.saved_name = None            # 存进配方库后的名字
+        self.pixel_scale = 0.0            # px/μm（可选比例尺标定）
+        self.bar_info = None              # 条棒模板，用于批量自动识别比例尺
         self.picked_path = None           # 用户换选的基准图（若有）
         self.suggest_name = (suggest_name or '').strip()
         self.candidates = list(candidates or [])   # 可换的基准图候选
@@ -208,20 +210,16 @@ class QuickTeachDialog(QDialog):
 
     def _build_ui(self):
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(12, 10, 12, 10)
-        lo.setSpacing(8)
+        lo.setContentsMargins(16, 16, 16, 16)
+        lo.setSpacing(12)
 
         # 步骤条 + 更换基准图
         row = QHBoxLayout()
         row.setSpacing(8)
         self.step_btns = []
         for i, t in enumerate(self.STEPS):
-            b = create_secondary_button(
-                t, lambda _=False, i=i: self._set_step(i), checkable=True)
-            b.setStyleSheet(
-                "QPushButton { text-align: left; padding: 7px 10px; font-size: 12px; }"
-                "QPushButton:checked { background: #4299e1; color: #ffffff;"
-                " font-weight: 600; border-color: #4299e1; }")
+            b = create_nav_button(
+                t, lambda _=False, i=i: self._set_step(i))
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             row.addWidget(b)
             self.step_btns.append(b)
@@ -251,8 +249,7 @@ class QuickTeachDialog(QDialog):
         # 底部②：保存为配方（默认勾选 → 学完即入库，以后可在下拉框直接复用）
         row = QHBoxLayout()
         row.setSpacing(6)
-        self.chk_save = QCheckBox("保存为配方（以后可直接复用）")
-        self.chk_save.setChecked(True)
+        self.chk_save = create_checkbox("保存为配方（以后可直接复用）", True)
         row.addWidget(self.chk_save)
         self.edit_name = QLineEdit(self.suggest_name or "快速示教")
         self.edit_name.setMaximumWidth(180)
@@ -278,10 +275,8 @@ class QuickTeachDialog(QDialog):
     def _build_left(self):
         from PyQt6.QtWidgets import QWidget, QFrame
         box = QFrame()
-        box.setObjectName("TeachLeftPanel")     # ★ 限定：不写裸 QFrame，否则内部 QLabel 也会被套边框 ✗
+        box.setObjectName("SidebarCard")
         box.setFixedWidth(232)
-        box.setStyleSheet("QFrame#TeachLeftPanel { background:#FFFFFF;"
-                          " border:1px solid #DCE3EC; border-radius:10px; }")
         v = QVBoxLayout(box)
         v.setContentsMargins(12, 12, 12, 12)
         v.setSpacing(8)
@@ -319,6 +314,18 @@ class QuickTeachDialog(QDialog):
         self.btn_clear = create_secondary_button("清空点选", self._clear_marks)
         p2.addWidget(self.btn_clear)
         v.addWidget(self.pane_void)
+
+        # —— 可选：比例尺标定（原完整示教唯一独有能力，收进这里） ——
+        v.addSpacing(4)
+        self.chk_scale = create_checkbox(
+            "启用比例尺标定（可选）", False, self._toggle_scale)
+        v.addWidget(self.chk_scale)
+        self.btn_scale = create_secondary_button("在图上划比例尺", self._start_calib)
+        self.btn_scale.setEnabled(False)
+        v.addWidget(self.btn_scale)
+        self.lbl_scale = create_info_label("未标定（不影响空洞率 %）")
+        self.lbl_scale.setWordWrap(True)
+        v.addWidget(self.lbl_scale)
         v.addStretch()
         return box
 
@@ -354,20 +361,87 @@ class QuickTeachDialog(QDialog):
         except Exception:
             exist = False
         self.lbl_save_hint.setText(
-            f"⚠ 已有同名配方，保存将覆盖它" if exist
+            "注意：已有同名配方，保存将覆盖它" if exist
             else "保存后可在批次面板的配方下拉框里直接选用")
 
     def _connect(self):
         self.canvas.roi_poly_finished.connect(self._on_poly)
         self.canvas.roi_polygon_edited.connect(self._on_poly_edited)
         self.canvas.teach_void_at.connect(self._on_click_void)
+        self.canvas.calib_drawn.connect(self._on_calib_drawn)
+
+    # ---------------------------------------------------- 可选比例尺标定
+    def _toggle_scale(self, on):
+        self.btn_scale.setEnabled(bool(on))
+        if not on:
+            self.pixel_scale = 0.0
+            self.bar_info = None
+            self.canvas.calib_line = None
+            self.canvas.mode = 'none'
+            self.lbl_scale.setText("未标定（不影响空洞率 %）")
+            if self.blobs:
+                self._schedule_learn()
+            return
+        self.lbl_scale.setText("点“在图上划比例尺”，再输入线段实际 μm")
+
+    def _start_calib(self):
+        if not self.chk_scale.isChecked():
+            return
+        self.btn_poly.setChecked(False)
+        self.btn_edit_roi.setChecked(False)
+        self.canvas.set_teach_void_mode(False)
+        self.canvas.mode = 'calibration'
+        self.lbl_scale.setText("在 SEM 比例尺上拖一条线")
+
+    def _on_calib_drawn(self, p1, p2):
+        dist_px = float(np.hypot(p2.x() - p1.x(), p2.y() - p1.y()))
+        if dist_px < 5:
+            QMessageBox.warning(self, "提示", "标定线太短，请重画")
+            return
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("标定比例尺")
+        dialog.setLabelText("输入该线段代表的实际长度 (μm):")
+        dialog.setDoubleRange(0.01, 100000)
+        dialog.setDoubleStep(0.1)
+        dialog.setDoubleValue(10.0)
+        if not dialog.exec():
+            return
+        real_um = dialog.doubleValue()
+        if real_um <= 0:
+            return
+        self.pixel_scale = dist_px / real_um
+        h, w = self.gray.shape
+        horizontal = abs(p2.y() - p1.y()) <= abs(p2.x() - p1.x())
+        x1, x2 = sorted([p1.x(), p2.x()])
+        y1, y2 = sorted([p1.y(), p2.y()])
+        pad_x, pad_y = 12, 14
+        tx1 = max(0, int(x1) - pad_x)
+        ty1 = max(0, int(y1) - pad_y)
+        tx2 = min(w, int(x2) + pad_x)
+        ty2 = min(h, int(y2) + pad_y)
+        template = self.gray[ty1:ty2, tx1:tx2].copy()
+        mx, my = int((x1 + x2) / 2), int((y1 + y2) / 2)
+        sample = self.gray[max(0, my - 3):my + 4, max(0, mx - 3):mx + 4]
+        dark = bool(sample.size and float(np.median(sample)) <= float(np.median(self.gray)))
+        self.bar_info = {
+            'template': template, 'length_px': dist_px, 'real_um': real_um,
+            'horizontal': horizontal, 'dark': dark,
+        }
+        self.canvas.calib_line = (p1, p2, f"{real_um:g} μm")
+        self.canvas.mode = 'none'
+        self.lbl_scale.setText(
+            f"已标定：{real_um:g} μm = {dist_px:.0f}px"
+            f"（{self.pixel_scale:.2f}px/μm）")
+        self.canvas.update()
+        if self.blobs:
+            self._schedule_learn()
 
     # ------------------------------------------------------- 步骤与键盘
     def _set_step(self, i):
         self._step = max(0, min(int(i), len(self.STEPS) - 1))
         for k, b in enumerate(self.step_btns):
             b.setChecked(k == self._step)
-            mark = "▶ " if k == self._step else ("✓ " if self._done(k) else "· ")
+            mark = "› " if k == self._step else ("√ " if self._done(k) else "· ")
             b.setText(mark + self.STEPS[k])
         self.pane_roi.setVisible(self._step == 0)
         self.pane_void.setVisible(self._step == 1)
@@ -556,8 +630,14 @@ class QuickTeachDialog(QDialog):
         if not self.blobs or self.roi_mask is None:
             return
         try:
-            model = learn_taught_model(self.gray, self.roi_mask, self.marks,
-                                       void_blobs=self.blobs)
+            model = learn_taught_model(
+                self.gray, self.roi_mask, self.marks,
+                px_per_um=self.pixel_scale,
+                bar_length_px=(self.bar_info or {}).get('length_px', 0.0),
+                bar_real_um=(self.bar_info or {}).get('real_um', 0.0),
+                bar_horizontal=(self.bar_info or {}).get('horizontal', True),
+                bar_dark=(self.bar_info or {}).get('dark', True),
+                void_blobs=self.blobs)
         except Exception as e:
             self.lbl_stat.setText(f"学习失败：{e}")
             return
@@ -591,7 +671,7 @@ class QuickTeachDialog(QDialog):
         if not res.get('ok'):
             self.lbl_stat.setText(
                 f"t_焊层={sol:.0f}　t_空洞={voi:.0f}　"
-                f"⚠ 示例图上未定位到焊层带：{(res.get('warnings') or [''])[0]}")
+                f"注意：示例图上未定位到焊层带：{(res.get('warnings') or [''])[0]}")
             return
         self.lbl_stat.setText(
             f"t_焊层={sol:.0f}　t_空洞={voi:.0f}　"
@@ -607,7 +687,8 @@ class QuickTeachDialog(QDialog):
             name = (self.edit_name.text() or '').strip() or self.suggest_name or "快速示教"
             self.model['name'] = name
             try:
-                save_taught(self.model)
+                save_taught(self.model,
+                            bar_template=(self.bar_info or {}).get('template'))
                 self.saved_name = name
             except Exception as e:
                 QMessageBox.warning(self, "提示", f"保存配方失败（不影响本次使用）：{e}")

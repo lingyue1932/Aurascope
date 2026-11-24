@@ -1,8 +1,8 @@
 """UI组件创建函数"""
 
-from PyQt6.QtWidgets import (QPushButton, QLabel, QSlider, QGroupBox, 
-                             QCheckBox, QVBoxLayout, QHBoxLayout, QSizePolicy,
-                             QWidget)
+from PyQt6.QtWidgets import (QPushButton, QLabel, QSlider, QGroupBox,
+                             QCheckBox, QFrame, QVBoxLayout, QHBoxLayout,
+                             QSizePolicy, QWidget)
 from PyQt6.QtCore import Qt
 
 
@@ -38,6 +38,16 @@ def create_danger_button(text, callback=None):
     """创建危险按钮"""
     btn = QPushButton(text)
     btn.setObjectName("DangerBtn")
+    if callback:
+        btn.clicked.connect(callback)
+    return btn
+
+
+def create_nav_button(text, callback=None, checkable=True):
+    """创建步骤导航按钮（左侧竖排步骤条，checked 态主色填充）"""
+    btn = QPushButton(text)
+    btn.setObjectName("NavBtn")
+    btn.setCheckable(checkable)
     if callback:
         btn.clicked.connect(callback)
     return btn
@@ -101,6 +111,15 @@ def create_groupbox(title):
     return gb
 
 
+def create_divider():
+    """创建 1px 分割线（token 描边色）"""
+    line = QFrame()
+    line.setObjectName("Divider")
+    line.setFrameShape(QFrame.Shape.NoFrame)
+    line.setFixedHeight(1)
+    return line
+
+
 def create_card_title(text):
     """创建卡片大标题"""
     label = QLabel(text)
@@ -119,6 +138,20 @@ def create_stat_value(text=""):
     """创建统计数值标签"""
     label = QLabel(text)
     label.setObjectName("StatValue")
+    return label
+
+
+def create_success_value(text=""):
+    """创建成功语义的大号数值标签（等宽 17px）"""
+    label = QLabel(text)
+    label.setObjectName("SuccessValue")
+    return label
+
+
+def create_error_value(text=""):
+    """创建错误语义的大号数值标签（等宽 17px）"""
+    label = QLabel(text)
+    label.setObjectName("ErrorValue")
     return label
 
 
@@ -188,7 +221,7 @@ class CollapsibleSection(QWidget):
         self.container = QWidget()
         self.container.setObjectName("CollapseBody")
         self._container_layout = QVBoxLayout(self.container)
-        self._container_layout.setContentsMargins(10, 2, 10, 10)
+        self._container_layout.setContentsMargins(10, 8, 10, 10)
         self._container_layout.setSpacing(6)
         layout.addWidget(self.container)
 

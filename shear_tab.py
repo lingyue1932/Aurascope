@@ -2,10 +2,11 @@
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                              QScrollArea, QLabel, QLineEdit, QGridLayout,
-                             QSizePolicy, QGraphicsDropShadowEffect, QApplication)
+                             QSizePolicy, QApplication)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QDoubleValidator
+from PyQt6.QtGui import QDoubleValidator
 
+from styles import _C
 from ui_components import (create_primary_button, create_secondary_button,
                            create_step_title, create_card_title,
                            create_card_subtitle, create_stat_value,
@@ -39,9 +40,6 @@ class ShearTab(QWidget):
         card = QFrame()
         card.setObjectName("SidebarCard")
         card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30); shadow.setOffset(0, 4); shadow.setColor(QColor(0, 0, 0, 25))
-        card.setGraphicsEffect(shadow)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -50,8 +48,8 @@ class ShearTab(QWidget):
 
         content = QWidget()
         v = QVBoxLayout(content)
-        v.setContentsMargins(28, 28, 28, 28)
-        v.setSpacing(16)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(14)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         title = create_card_title("Die Shear Force Calculator")
@@ -90,7 +88,9 @@ class ShearTab(QWidget):
 
         v.addWidget(create_step_title("最小剪切力要求 (MIL-STD-883)"))
         self.result_widgets = {}
-        for label, mult, color in [("1X 最小力值", 1.0, "#2563eb"), ("1.25X 测试力值", 1.25, "#f59e0b"), ("2X 测试力值", 2.0, "#dc2626")]:
+        for label, mult, color in [("1X 最小力值", 1.0, _C['accent']),
+                                   ("1.25X 测试力值", 1.25, _C['warning']),
+                                   ("2X 测试力值", 2.0, _C['danger'])]:
             f = QFrame()
             f.setObjectName("ResultCard")
             f_lo = QVBoxLayout(f)
@@ -156,9 +156,6 @@ class ShearTab(QWidget):
         card = QFrame()
         card.setObjectName("SidebarCard")
         card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30); shadow.setOffset(0, 4); shadow.setColor(QColor(0, 0, 0, 25))
-        card.setGraphicsEffect(shadow)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -167,15 +164,15 @@ class ShearTab(QWidget):
 
         content = QWidget()
         v = QVBoxLayout(content)
-        v.setContentsMargins(28, 28, 28, 28)
-        v.setSpacing(16)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(14)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         v.addWidget(create_step_title("标准说明"))
         info = [
             ("参考标准：MIL-STD-883H Method 2019.9 (Figure 2019-4)", "InfoLabel"),
             ("", "InfoLabel"),
-            ("适用范围：预制金锡 (Preform/Pre-coated) 芯片剪切力计算", "ErrorLabel"),
+            ("适用范围：预制金锡 (Preform/Pre-coated) 芯片剪切力计算", "InfoLabel"),
             ("", "InfoLabel"),
             ("面积范围限制", "StepTitle"),
             ("  - 面积 < 5x10⁻⁴ in²: 力值按比例计算", "InfoLabel"),
@@ -230,10 +227,8 @@ class ShearTab(QWidget):
                 g_lb, n_lb = self.result_widgets[mult]
                 g_lb.setText("不适用")
                 n_lb.setText("不适用")
-                g_lb.setObjectName("ForceValue")
-                n_lb.setObjectName("ForceValue")
-                g_lb.setStyleSheet("color: #dc2626; font-weight: 700;")
-                n_lb.setStyleSheet("color: #dc2626; font-weight: 700;")
+                self._set_value_state(g_lb, error=True)
+                self._set_value_state(n_lb, error=True)
             self.btn_copy.setEnabled(False)
             self.prompt.setVisible(False)
             return
@@ -251,8 +246,8 @@ class ShearTab(QWidget):
             g_lb, n_lb = self.result_widgets[mult]
             g_lb.setText(f"{g_base:.1f} g")
             n_lb.setText(f"{g_base / 1000 * 9.8:.4f} N")
-            g_lb.setObjectName("ForceValue")
-            n_lb.setObjectName("ForceValue")
+            self._set_value_state(g_lb)
+            self._set_value_state(n_lb)
 
         self.btn_copy.setEnabled(True)
         self.prompt.setVisible(False)
@@ -266,10 +261,17 @@ class ShearTab(QWidget):
             g_lb, n_lb = self.result_widgets[mult]
             g_lb.setText("0.0 g")
             n_lb.setText("0.0000 N")
-            g_lb.setObjectName("ForceValue")
-            n_lb.setObjectName("ForceValue")
+            self._set_value_state(g_lb)
+            self._set_value_state(n_lb)
         self.btn_copy.setEnabled(False)
         self.prompt.setVisible(True)
+
+    @staticmethod
+    def _set_value_state(label, error=False):
+        """切换数值语义（正常/不适用），objectName 变化后强制重刷 QSS"""
+        label.setObjectName('ErrorValue' if error else 'ForceValue')
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def reset(self):
         self.inp_len.clear()

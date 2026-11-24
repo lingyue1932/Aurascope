@@ -4,17 +4,15 @@ import pandas as pd
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
-                              QFrame, QScrollArea, QLabel, QSlider,
-                              QSpinBox, QComboBox, QMessageBox, QSizePolicy,
-                              QGraphicsDropShadowEffect)
+                              QFrame, QScrollArea, QLabel,
+                              QSpinBox, QComboBox, QMessageBox, QSizePolicy)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
 
 from image import detect_objects, otsu_threshold
 from ui_components import (create_primary_button, create_secondary_button,
                            create_danger_button, create_step_title,
-                           create_checkbox, create_slider_with_label,
-                           create_count_result)
+                           create_checkbox, create_slider, create_divider,
+                           create_slider_with_label, create_count_result)
 from counting_canvas import CountingCanvas
 
 
@@ -58,12 +56,6 @@ class CountingTab(QWidget):
         sidebar.setMaximumWidth(360)
         sidebar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 30))
-        sidebar.setGraphicsEffect(shadow)
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -71,7 +63,7 @@ class CountingTab(QWidget):
 
         sb = QWidget()
         layout = QVBoxLayout(sb)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -80,15 +72,20 @@ class CountingTab(QWidget):
 
         layout.addWidget(create_step_title("框选区域"))
         roi_row = QHBoxLayout()
+        roi_row.setSpacing(8)
         self.btn_roi_rect = create_secondary_button("矩形框选", checkable=True)
         self.btn_roi_rect.toggled.connect(lambda e: self._toggle_roi('rect', e))
         roi_row.addWidget(self.btn_roi_rect)
         self.btn_roi_poly = create_secondary_button("多边形框选", checkable=True)
         self.btn_roi_poly.toggled.connect(lambda e: self._toggle_roi('poly', e))
         roi_row.addWidget(self.btn_roi_poly)
-        self.btn_rerun = create_secondary_button("重新框选", self._reset_roi)
-        roi_row.addWidget(self.btn_rerun)
+        roi_row.setStretch(0, 1)
+        roi_row.setStretch(1, 1)
         layout.addLayout(roi_row)
+        roi_row2 = QHBoxLayout()
+        self.btn_rerun = create_secondary_button("重新框选", self._reset_roi)
+        roi_row2.addWidget(self.btn_rerun)
+        layout.addLayout(roi_row2)
 
         layout.addWidget(create_step_title("检测设置"))
         self._detect_widgets = QWidget()
@@ -98,7 +95,7 @@ class CountingTab(QWidget):
         self.chk_invert = create_checkbox("检测亮色物体", True, self.detect)
         dw.addWidget(self.chk_invert)
 
-        dw.addWidget(QLabel("二值化阈值:"))
+        dw.addWidget(QLabel("二值化阈值"))
         self.slider_thresh, self.lbl_thresh = create_slider_with_label(0, 255, 80, self.detect)
         dw.addWidget(self.lbl_thresh)
         dw.addWidget(self.slider_thresh)
@@ -106,10 +103,11 @@ class CountingTab(QWidget):
         btn_otsu = create_secondary_button("自动阈值 (Otsu)", self.auto_otsu)
         dw.addWidget(btn_otsu)
 
-        dw.addWidget(QLabel("最小面积 (像素):"))
+        dw.addWidget(QLabel("最小面积（像素）"))
         self.spin_min_area = QSpinBox()
         self.spin_min_area.setRange(0, 100000)
         self.spin_min_area.setValue(1)
+        self.spin_min_area.setSuffix(' px²')
         self.spin_min_area.valueChanged.connect(self._on_min_area_changed)
         dw.addWidget(self.spin_min_area)
 
@@ -117,14 +115,11 @@ class CountingTab(QWidget):
         dw.addWidget(self.chk_morph)
 
         morph_row = QHBoxLayout()
-        morph_row.addWidget(QLabel("核大小:"))
-        self.slider_morph = QSlider(Qt.Orientation.Horizontal)
-        self.slider_morph.setRange(1, 15)
-        self.slider_morph.setValue(3)
+        morph_row.addWidget(QLabel("核大小"))
+        self.slider_morph = create_slider(1, 15, 3, self._on_morph_changed)
         self.slider_morph.setSingleStep(2)
-        self.slider_morph.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.slider_morph.valueChanged.connect(self._on_morph_changed)
-        morph_row.addWidget(self.slider_morph)
+        self.slider_morph.setMinimumWidth(60)
+        morph_row.addWidget(self.slider_morph, 1)
         self.lbl_morph_val = QLabel("3")
         self.lbl_morph_val.setFixedWidth(24)
         morph_row.addWidget(self.lbl_morph_val)
@@ -138,13 +133,10 @@ class CountingTab(QWidget):
         dw.addWidget(self.chk_watershed)
 
         ws_row = QHBoxLayout()
-        ws_row.addWidget(QLabel("最小间距:"))
-        self.slider_ws = QSlider(Qt.Orientation.Horizontal)
-        self.slider_ws.setRange(3, 50)
-        self.slider_ws.setValue(10)
-        self.slider_ws.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.slider_ws.valueChanged.connect(self._on_ws_changed)
-        ws_row.addWidget(self.slider_ws)
+        ws_row.addWidget(QLabel("最小间距"))
+        self.slider_ws = create_slider(3, 50, 10, self._on_ws_changed)
+        self.slider_ws.setMinimumWidth(60)
+        ws_row.addWidget(self.slider_ws, 1)
         self.lbl_ws_val = QLabel("10")
         self.lbl_ws_val.setFixedWidth(24)
         ws_row.addWidget(self.lbl_ws_val)
@@ -154,10 +146,7 @@ class CountingTab(QWidget):
         self._detect_widgets.setEnabled(False)
         layout.addWidget(self._detect_widgets)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #e2e8f0;")
-        layout.addWidget(sep)
+        layout.addWidget(create_divider())
 
         layout.addWidget(create_step_title("手动编辑"))
         edit_row = QHBoxLayout()
@@ -169,10 +158,7 @@ class CountingTab(QWidget):
         edit_row.addWidget(self.btn_del)
         layout.addLayout(edit_row)
 
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #e2e8f0;")
-        layout.addWidget(sep2)
+        layout.addWidget(create_divider())
 
         self.btn_defaults = create_danger_button("恢复默认设置", self._restore_defaults)
         layout.addWidget(self.btn_defaults)

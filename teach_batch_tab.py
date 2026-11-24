@@ -23,7 +23,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QDialog,QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
                              QFrame, QScrollArea, QLabel, QTableWidget,
                              QTableWidgetItem, QHeaderView, QInputDialog,
-                             QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
+                             QMessageBox, QSizePolicy,
                              QProgressBar, QProgressDialog, QComboBox,
                              QListWidget, QListWidgetItem, QAbstractItemView, QGridLayout,
                              QSpinBox, QSplitter, QStackedWidget, QToolButton,
@@ -42,8 +42,10 @@ from recipe import (list_recipes, load_recipe, save_taught, load_bar_template,
                     _recipe_root)
 from ui_components import (create_primary_button, create_secondary_button,
                            create_success_button, create_danger_button,
-                           create_step_title, create_info_label,
-                           create_checkbox, CollapsibleSection)
+                           create_nav_button, create_success_label,
+                           create_success_value, create_step_title,
+                           create_info_label, create_checkbox,
+                           CollapsibleSection)
 
 IMG_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
 
@@ -218,7 +220,7 @@ class TeachBatchTab(QWidget):
         self._batch_canceled = False
         self._last_model = None            # 最近一次批量的模型（预览/导出时按需重算）
         self.quick_cfg = None              # 「快速设定」的设定值（复用整批）
-        self.quick_model = None            # 由 quick_cfg 生成的合成配方
+        self._model_source = None          # 当前生效模型来源：teach / quick
         self._last_bar_template = None
         # 单图核对与修正
         self.result_edits = {}             # row -> {'mask','polygon','voids','caliber'}
@@ -232,36 +234,58 @@ class TeachBatchTab(QWidget):
         self._del_void_mode = False        # 预览「删除空洞」模式
         self.init_ui()
 
+    # ================== 当前示教模型（单一事实源） ==================
+
+    @property
+    def quick_model(self):
+        """兼容旧接口：快速示教模型即当前生效模型。"""
+        return self.model if self._model_source == 'quick' else None
+
+    @quick_model.setter
+    def quick_model(self, model):
+        if model is None:
+            if self._model_source == 'quick':
+                self._adopt_teach_model(None, None)
+        else:
+            self._adopt_teach_model(model, 'quick')
+
+    def _adopt_teach_model(self, model, source):
+        """快速/完整示教统一在此写入当前模型，避免两套状态互相覆盖。"""
+        self.model = model
+        self._model_source = source if model is not None else None
+        if hasattr(self, 'btn_save_recipe'):
+            self.btn_save_recipe.setEnabled(model is not None)
+        try:
+            self._refresh_step_states()
+        except Exception:
+            pass
+
+    def _select_recipe(self, name):
+        """按配方名选中下拉项（数据名优先，再按显示名）。"""
+        if not name:
+            return False
+        idx = self.combo_recipe.findData(f'{name}.taught.json')
+        if idx < 0:
+            idx = self.combo_recipe.findText(name)
+        if idx < 0:
+            return False
+        self.combo_recipe.setCurrentIndex(idx)
+        return True
+
     # ================== UI ==================
 
     STEP_TITLES = ("样板图", "点选空洞", "焊层区域", "比例尺", "学习")
 
     def init_ui(self):
         lo = QVBoxLayout(self)
-        lo.setContentsMargins(14, 12, 14, 12)
-        lo.setSpacing(10)
-
-        # ── 顶部：流程模式切换（示教 / 批量）──
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(8)
-        self.btn_mode_teach = create_primary_button("示教学习",
-                                                    self._set_mode_teach)
-        
-        self.btn_mode_teach.setCheckable(True)
-        self.btn_mode_batch = create_primary_button("批量检测",
-                                                      self._set_mode_batch)
-        self.btn_mode_batch.setCheckable(True)
-        mode_row.addWidget(self.btn_mode_teach)
-        mode_row.addWidget(self.btn_mode_batch)
-        mode_row.addStretch(1)
-        lo.addLayout(mode_row)
+        lo.setContentsMargins(16, 16, 16, 16)
+        lo.setSpacing(12)
 
         # ── 主区：上=工作区（左面板 + 画布），下=结果区（批量后出现）──
         self.vsplit = QSplitter(Qt.Orientation.Vertical)
         self.hsplit = QSplitter(Qt.Orientation.Horizontal)
         self.splitter = self.hsplit          # 兼容旧名
         self.left_stack = QStackedWidget()
-        self.left_stack.addWidget(self._build_teach_panel())
         self.left_stack.addWidget(self._build_batch_panel())
         self.hsplit.addWidget(self.left_stack)
         self.canvas = ImageCanvas()
@@ -282,8 +306,8 @@ class TeachBatchTab(QWidget):
         self.left_stack.setMinimumWidth(self._sb_min)
         start = min(460, max(340, self._sb_min))
         self.hsplit.setSizes([start, max(560, 1100 - start)])
-        self.set_teach_step(0)
-        self._set_mode_teach()
+        self._set_mode_batch()
+        self.results.setVisible(False)
         self._connect()
 
     # ---------- 面板骨架 ----------
@@ -311,20 +335,10 @@ class TeachBatchTab(QWidget):
         return frame
 
     def _compute_left_min_width(self):
-        """按两个面板"全部内容可见"的真实需求算左栏最小宽度
-
-        步骤容器只显示当前步时，其余容器不参与 sizeHint——若按当时状态定宽，
-        用户切到别的步骤或展开批量面板就会把内容裁掉。
-        """
-        for c in self._step_containers:
-            c.setVisible(True)
-        self._teach_content.adjustSize()
+        """按批量面板全部内容可见的真实需求算左栏最小宽度。"""
         self._batch_content.adjustSize()
         QApplication.processEvents()
-        hint = max(self._teach_content.sizeHint().width(),
-                   self._batch_content.sizeHint().width())
-        self._apply_step_visibility()
-        self._teach_content.adjustSize()
+        hint = self._batch_content.sizeHint().width()
         return max(300, min(520, hint + 12))
 
     # ---------- 示教页 ----------
@@ -333,20 +347,18 @@ class TeachBatchTab(QWidget):
         content = QWidget()
         self._teach_content = content
         v = QVBoxLayout(content)
-        v.setContentsMargins(18, 18, 18, 18)
-        v.setSpacing(10)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(14)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
+        v.addWidget(create_info_label(
+            "高级流程：仅在快速示教不适用时使用。日常建议回批量页用“快速示教（两步）”。"))
 
         strip = QVBoxLayout()
-        strip.setSpacing(3)
+        strip.setSpacing(4)
         self.step_buttons = []
         for i, t in enumerate(self.STEP_TITLES):
-            b = create_secondary_button(
-                f"{t}", lambda _=False, i=i: self.set_teach_step(i), checkable=True)
-            b.setStyleSheet(
-                "QPushButton { text-align: left; padding: 7px 10px; font-size: 12px; }"
-                "QPushButton:checked { background: #4299e1; color: #ffffff;"
-                " font-weight: 600; border-color: #4299e1; }")
+            b = create_nav_button(
+                t, lambda _=False, i=i: self.set_teach_step(i))
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             strip.addWidget(b)
             self.step_buttons.append(b)
@@ -389,7 +401,6 @@ class TeachBatchTab(QWidget):
         row.addWidget(self.btn_clear_marks)
         s.addLayout(row)
         self.lbl_void = create_info_label("已点选 0 个")
-        self.lbl_void.setStyleSheet("font-size: 12px; color: #4a5568;")
         s.addWidget(self.lbl_void)
 
         # ── ③ 示范焊层区域 ──
@@ -409,7 +420,6 @@ class TeachBatchTab(QWidget):
             "光标移到边界，最近的顶点会高亮，拖动它移动；双击边加点；Delete 删点")
         s.addWidget(self.btn_edit_roi)
         self.lbl_roi = create_info_label("未定义")
-        self.lbl_roi.setStyleSheet("font-size: 12px; color: #4a5568;")
         s.addWidget(self.lbl_roi)
 
         # ── ④ 标定比例尺 ──
@@ -419,7 +429,6 @@ class TeachBatchTab(QWidget):
         self.btn_calib.setToolTip("在图上 SEM 的比例尺上划一条线，再输入实际 μm 值")
         s.addWidget(self.btn_calib)
         self.lbl_calib = create_info_label("未标定")
-        self.lbl_calib.setStyleSheet("font-size: 12px; color: #4a5568;")
         s.addWidget(self.lbl_calib)
 
         # ── ⑤ 学习并保存 ──
@@ -430,8 +439,6 @@ class TeachBatchTab(QWidget):
         self.btn_save_recipe.setEnabled(False)
         s.addWidget(self.btn_save_recipe)
         self.lbl_learn = create_info_label("完成 ①~④ 后点「开始学习」")
-        self.lbl_learn.setWordWrap(True)
-        self.lbl_learn.setStyleSheet("font-size: 12px; color: #4a5568;")
         s.addWidget(self.lbl_learn)
 
         v.addStretch()
@@ -443,8 +450,8 @@ class TeachBatchTab(QWidget):
         content = QWidget()
         self._batch_content = content
         v = QVBoxLayout(content)
-        v.setContentsMargins(18, 18, 18, 18)
-        v.setSpacing(10)
+        v.setContentsMargins(16, 16, 16, 16)
+        v.setSpacing(14)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.combo_recipe = QComboBox()
@@ -455,19 +462,16 @@ class TeachBatchTab(QWidget):
         self.btn_folder = create_secondary_button("选择批次文件夹", self.pick_folder)
         v.addWidget(self.btn_folder)
         self.lbl_folder = create_info_label("未选择文件夹")
-        self.lbl_folder.setStyleSheet("font-size: 12px; color: #4a5568;")
         v.addWidget(self.lbl_folder)
 
         # 快速示教（两步·操作最少）：① 焊层区域（打开即自动识别） ② 点选空洞（点完自动学习）
-        self.btn_quick_teach = create_secondary_button("快速示教（两步）", self.on_quick_teach)
+        self.btn_quick_teach = create_primary_button("快速示教（两步）", self.on_quick_teach)
         self.btn_quick_teach.setToolTip(
             "自动挑一张代表性图打开：① 焊层区域已自动识别好（不对可手绘/拖顶点）\n"
             "② 左键点 2~3 个典型空洞，点完自动学习并实时显示结果；点错按 Delete 删除。\n"
             "算法与完整示教完全同源，学出的模型直接用于整批检测。")
         v.addWidget(self.btn_quick_teach)
-        self.lbl_quick_teach = create_info_label("")
-        self.lbl_quick_teach.setWordWrap(True)
-        self.lbl_quick_teach.setStyleSheet("font-size: 12px; color: #0F6E56;")
+        self.lbl_quick_teach = create_success_label("")
         v.addWidget(self.lbl_quick_teach)
 
         row = QHBoxLayout()
@@ -483,7 +487,6 @@ class TeachBatchTab(QWidget):
         self.progress.setTextVisible(True)
         v.addWidget(self.progress)
         self.lbl_current = create_info_label("")
-        self.lbl_current.setStyleSheet("font-size: 12px; color: #4a5568;")
         v.addWidget(self.lbl_current)
 
         # 空洞判定：默认收起（需要放宽时再展开），避免默认视图堆满控件
@@ -545,12 +548,9 @@ class TeachBatchTab(QWidget):
         # 汇总（3 行，小字号，避免长串换行错乱）
         head = QHBoxLayout()
         head.setSpacing(10)
-        self.lbl_total = QLabel("总空洞率: —")
-        self.lbl_total.setStyleSheet(
-            "font-size: 17px; font-weight: 600; color: #0F6E56;")
+        self.lbl_total = create_success_value("总空洞率: —")
         head.addWidget(self.lbl_total)
-        self.lbl_stats = QLabel("")
-        self.lbl_stats.setStyleSheet("font-size: 12px; color: #4a5568;")
+        self.lbl_stats = create_info_label("")
         head.addWidget(self.lbl_stats, 1)
         self.btn_collapse_results = create_secondary_button(
             "收起结果区", self._toggle_results_collapse)
@@ -572,8 +572,6 @@ class TeachBatchTab(QWidget):
         v.addWidget(self.thumb_scroll)
 
         self.lbl_preview = create_info_label("预览: 未选择")
-        self.lbl_preview.setStyleSheet("font-size: 12px; color: #4a5568;")
-        self.lbl_preview.setStyleSheet("font-size: 12px; color: #4a5568;")
         v.addWidget(self.lbl_preview)
 
         body = QHBoxLayout()
@@ -692,24 +690,15 @@ class TeachBatchTab(QWidget):
             h = max(260, int(self.vsplit.height() * 0.40))
             self.vsplit.setSizes([max(1, self.vsplit.height() - h), h])
 
-    # ---------- 模式与步骤 ----------
+    # ---------- 模式 ----------
 
     def _set_mode_teach(self):
-        self._mode = 'teach'
-        self.left_stack.setCurrentIndex(0)
-        self.btn_mode_teach.setChecked(True)
-        self.btn_mode_batch.setChecked(False)
-        self.results.setVisible(False)
-        try:
-            self._refresh_step_states()
-        except Exception:
-            pass
+        """完整示教已移除；保留旧调用入口，统一回批量模式。"""
+        self._set_mode_batch()
 
     def _set_mode_batch(self):
         self._mode = 'batch'
-        self.left_stack.setCurrentIndex(1)
-        self.btn_mode_batch.setChecked(True)
-        self.btn_mode_teach.setChecked(False)
+        self.left_stack.setCurrentIndex(0)
         self.results.setVisible(True)
         self.refresh_recipe_combo()
         if self.batch_results and not getattr(self, '_results_collapsed', False):
@@ -738,10 +727,10 @@ class TeachBatchTab(QWidget):
         return False
 
     def _refresh_step_states(self):
-        """步骤条显示 ▶当前 / ✓已完成"""
+        """步骤条显示 ›当前 / √已完成"""
         cur = getattr(self, '_teach_step', 0)
         for i, b in enumerate(getattr(self, 'step_buttons', [])):
-            mark = '› ' if i == cur else ('✓ ' if self._step_done(i) else '·  ')
+            mark = '› ' if i == cur else ('√ ' if self._step_done(i) else '·  ')
             b.setText(f"{mark}{self.STEP_TITLES[i]}")
 
     def set_teach_step(self, i):
@@ -802,7 +791,7 @@ class TeachBatchTab(QWidget):
         self.void_blobs = []
         self.pixel_scale = 0.0
         self.bar_info = None
-        self.model = None
+        self._adopt_teach_model(None, None)
         self.recipe_name = None
         self.btn_save_recipe.setEnabled(False)
         self.btn_poly.setChecked(False)
@@ -1156,7 +1145,7 @@ class TeachBatchTab(QWidget):
             QMessageBox.warning(self, "错误", "学习失败，请检查焊层区域示范是否有效")
             return
         model['name'] = self.recipe_name or "未命名示教"
-        self.model = model
+        self._adopt_teach_model(model, 'teach')
 
         # 预览：在样板图上回放
         res = apply_taught_model(self.gray, model)
@@ -1228,9 +1217,7 @@ class TeachBatchTab(QWidget):
             QMessageBox.warning(self, "错误", f"保存失败: {e}")
             return
         self.refresh_recipe_combo()
-        idx = self.combo_recipe.findText(name)
-        if idx >= 0:
-            self.combo_recipe.setCurrentIndex(idx)
+        self._select_recipe(name)
         QMessageBox.information(self, "成功", f"示教配方「{name}」已保存")
 
     # ================== 批量检测 ==================
@@ -1263,21 +1250,15 @@ class TeachBatchTab(QWidget):
         self.lbl_folder.setText(f"已选择 {len(paths)} 张：{os.path.basename(folder)}")
         # 换批次文件夹 → 清掉上一次的快速示教模型（避免误用到别的器件上）
         self.quick_cfg = None
-        self.quick_model = None
+        if self._model_source == 'quick':
+            self._adopt_teach_model(None, None)
         self.lbl_quick_teach.setText("")
         # 复用：若配方库里已有"与该文件夹同名"的配方，自动选中并提示（省去重新示教）
         name = os.path.basename(os.path.normpath(folder))
-        try:
-            idx = self.combo_recipe.findData(f'{name}.taught.json')
-            if idx < 0:
-                idx = self.combo_recipe.findText(name)
-            if idx >= 0:
-                self.combo_recipe.setCurrentIndex(idx)
-                self.lbl_quick_teach.setText(
-                    f"已自动带出同名配方「{name}」——可直接开始批量；"
-                    f"要重做就点上方「快速示教（两步）」")
-        except Exception:
-            pass
+        if self._select_recipe(name):
+            self.lbl_quick_teach.setText(
+                f"已自动带出同名配方「{name}」——可直接开始批量；"
+                f"要重做就点上方「快速示教（两步）」")
 
     # ================== 快速设定（免示教路径） ==================
 
@@ -1362,18 +1343,14 @@ class TeachBatchTab(QWidget):
         if rc != QDialog.DialogCode.Accepted or dlg.get_model() is None:
             return
         self.quick_cfg = None
-        self.quick_model = dlg.get_model()
+        self._adopt_teach_model(dlg.get_model(), 'quick')
         # 存过配方就刷新下拉框并选中它，方便以后一键复用
         if getattr(dlg, 'saved_name', None):
             self.refresh_recipe_combo()
-            idx = self.combo_recipe.findData(f'{dlg.saved_name}.taught.json')
-            if idx < 0:
-                idx = self.combo_recipe.findText(dlg.saved_name)
-            if idx >= 0:
-                self.combo_recipe.setCurrentIndex(idx)
+            self._select_recipe(dlg.saved_name)
             self.lbl_quick_teach.setText(
                 f"已学并保存为配方「{dlg.saved_name}」——以后选同一批次文件夹会自动带出，"
-                f"也可在下拉框直接选用；本次已直接用于整批 ✔")
+                f"也可在下拉框直接选用；本次已直接用于整批 √")
         else:
             self._show_quick_label()
 
@@ -1395,9 +1372,9 @@ class TeachBatchTab(QWidget):
             f"　（点上方按钮可重做）")
 
     def start_batch(self):
-        # 快速示教/快速设定路径优先：有模型就直接用它，不再要求配方
-        if self.quick_model is not None:
-            fn, model, bar_template = None, self.quick_model, None
+        # 当前示教模型优先（快速/完整示教统一到 self.model）：有模型就不再要求配方
+        if self.model is not None:
+            fn, model, bar_template = None, self.model, None
         else:
             fn = self.combo_recipe.currentData()
             if not fn:
@@ -1576,6 +1553,7 @@ class TeachBatchTab(QWidget):
                 return
             r = self.batch_results[row]
         btn = QToolButton()
+        btn.setObjectName("ThumbBtn")
         btn.setCheckable(True)
         btn.setAutoRaise(True)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
@@ -1593,11 +1571,7 @@ class TeachBatchTab(QWidget):
             f"空洞率 {rate}　空洞 {r.get('void_count', '—')} 个\n"
             f"{'；'.join(r.get('warnings') or []) or '无警告'}")
         if (not r.get('ok')) or r.get('warnings'):
-            btn.setStyleSheet("QToolButton { border: 2px solid #C2410C;"
-                              " border-radius: 4px; padding: 2px; }")
-        else:
-            btn.setStyleSheet("QToolButton { border: 2px solid #DDD6FE;"
-                              " border-radius: 4px; padding: 2px; }")
+            btn.setProperty('warn', True)
         btn.clicked.connect(lambda _=False, i=row: self.preview_result(i))
         self.thumb_row.addWidget(btn)
 
@@ -1767,7 +1741,7 @@ class TeachBatchTab(QWidget):
         ok_copy, why = copy_bgr_to_clipboard(strip, silent=True)
         msg = (f"已导出金锡拼接图（{strip.shape[1]}×{strip.shape[0]}）\n{real}\n"
                f"大小 {self._kb(real)}")
-        msg += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴 ✔" if ok_copy
+        msg += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴 √" if ok_copy
                 else f"\n（复制到剪贴板失败：{why}）")
         if getattr(self, '_last_save_warning', ''):
             msg += "\n\n" + self._last_save_warning
@@ -1793,13 +1767,13 @@ class TeachBatchTab(QWidget):
         dlg.setWindowTitle("金锡拼接图预览")
         dlg.resize(1040, 640)
         lo = QVBoxLayout(dlg)
-        lo.setContentsMargins(12, 10, 12, 10)
-        lo.setSpacing(8)
+        lo.setContentsMargins(16, 16, 16, 16)
+        lo.setSpacing(12)
         bar = QHBoxLayout()
-        cap = QLabel(f"{strip.shape[1]} × {strip.shape[0]} px　"
-                     f"（共 {sum(1 for r in self.batch_results if r.get('ok'))} 张）"
-                     f"　滚轮缩放 · 拖动平移 · 双击适应窗口")
-        cap.setStyleSheet("font-size: 12px; color: #4a5568;")
+        cap = create_info_label(
+            f"{strip.shape[1]} × {strip.shape[0]} px　"
+            f"（共 {sum(1 for r in self.batch_results if r.get('ok'))} 张）"
+            f"　滚轮缩放 · 拖动平移 · 双击适应窗口")
         bar.addWidget(cap)
         bar.addStretch()
         btn_save = create_success_button("另存为 PNG")
@@ -2012,7 +1986,7 @@ class TeachBatchTab(QWidget):
             parts.append(f"另有 {above} 个大暗斑未计入(>{r.get('max_area_used')}px²)")
         warn = '；'.join(r.get('warnings') or [])
         if warn:
-            parts.append(f"⚠ {warn}")
+            parts.append(f"! {warn}")
         self.lbl_preview.setText('   '.join(parts))
 
     def _render_edit_band_overlay(self):
@@ -2324,7 +2298,7 @@ class TeachBatchTab(QWidget):
                 attrs = getattr(st, 'st_file_attributes', 0) or 0
                 if attrs & 0x4000:      # FILE_ATTRIBUTE_ENCRYPTED
                     self._last_save_warning = (
-                        '⚠ 注意：该文件被系统标记为「加密」（ENCRYPTED 属性）。'
+                        '注意：该文件被系统标记为「加密」（ENCRYPTED 属性）。'
                         '本机能打开，换机器或发给别人可能打不开，'
                         '需要把保存目录加入加密软件白名单')
                 elif attrs & 0x1:       # FILE_ATTRIBUTE_READONLY

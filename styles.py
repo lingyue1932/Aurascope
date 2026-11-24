@@ -107,6 +107,12 @@ QFrame#InnerCard {{
     border-radius: 10px;
     padding: 10px;
 }}
+/* 1px 分割线（替代页面里手写 HLine + 散写颜色） */
+QFrame#Divider {{
+    background: {c['border']};
+    border: none;
+    max-height: 1px;
+}}
 
 /* ══════════════════════════ 文字层级（6 级） ══════════════════════════ */
 QLabel#HeaderTitle {{
@@ -129,6 +135,16 @@ QLabel#WarningBox {{
 QLabel#StatValue {{ font-size: 12px; font-weight: 500; color: {c['text2']}; }}
 QLabel#ForceValue {{
     font-family: {c['mono']}; font-size: 17px; font-weight: 600; color: {c['text']};
+}}
+QLabel#SuccessValue {{
+    font-family: {c['mono']}; font-size: 17px; font-weight: 600; color: {c['success']};
+}}
+QLabel#ErrorValue {{
+    font-family: {c['mono']}; font-size: 17px; font-weight: 600; color: {c['danger']};
+}}
+QLabel#ImagePreview {{
+    background: {c['surface']}; border: 1px solid {c['border']};
+    border-radius: 8px; padding: 4px;
 }}
 QLabel#AreaValue, QLabel#CountResult {{
     font-family: {c['mono']}; font-size: 21px; font-weight: 700; color: {c['accent_a']};
@@ -195,6 +211,33 @@ QPushButton#DangerBtn:hover {{
 }}
 QPushButton#DangerBtn:pressed {{ background: rgba(220, 38, 38, 0.24); }}
 QPushButton#DangerBtn:disabled {{ background: #F4F5F8; color: {c['text3']}; }}
+
+/* 步骤导航按钮（左侧竖排步骤条，checked = 当前步骤） */
+QPushButton#NavBtn {{
+    background: transparent; color: {c['text2']};
+    border: 1px solid transparent; border-radius: 10px;
+    padding: 7px 10px; font-size: 12px; font-weight: 600;
+    text-align: left;
+}}
+QPushButton#NavBtn:hover {{ background: {c['accent_tint']}; color: {c['accent']}; }}
+QPushButton#NavBtn:pressed {{ background: {c['accent_tint2']}; }}
+QPushButton#NavBtn:checked {{
+    background: {c['accent']}; color: #FFFFFF; border-color: {c['accent']};
+}}
+QPushButton#NavBtn:focus {{ border: 1px solid {c['accent']}; }}
+QPushButton#NavBtn:disabled {{ color: {c['text3']}; }}
+
+/* 结果缩略图（可选中；warn=true 表示该图有警告） */
+QToolButton#ThumbBtn {{
+    background: {c['surface']}; color: {c['text2']};
+    border: 2px solid {c['border']}; border-radius: 8px; padding: 2px;
+}}
+QToolButton#ThumbBtn:hover {{ border-color: {c['accent']}; }}
+QToolButton#ThumbBtn:checked {{
+    border-color: {c['accent']}; background: {c['accent_tint']};
+}}
+QToolButton#ThumbBtn[warn="true"] {{ border-color: {c['warning']}; }}
+QToolButton#ThumbBtn[warn="true"]:checked {{ border-color: {c['accent']}; }}
 
 /* ══════════════════════════ 输入类 ══════════════════════════ */
 QLineEdit, QTextEdit, QPlainTextEdit {{
@@ -361,6 +404,9 @@ QSlider::handle:horizontal {{
 }}
 QSlider::handle:horizontal:hover {{ border-color: {c['accent_h']}; }}
 QSlider::handle:horizontal:pressed {{ background: {c['accent_tint2']}; }}
+QSlider::groove:horizontal:disabled {{ background: #EDF1F7; }}
+QSlider::sub-page:horizontal:disabled {{ background: #C7D2E4; }}
+QSlider::handle:horizontal:disabled {{ background: #F1F3F8; border-color: #C7D2E4; }}
 QSlider::groove:vertical {{ background: #E3E8F0; width: 6px; border-radius: 3px; }}
 QSlider::add-page:vertical {{ background: {c['accent']}; border-radius: 3px; }}
 QSlider::handle:vertical {{
@@ -387,6 +433,12 @@ QScrollArea {{ background: transparent; border: none; }}
 QScrollArea > QWidget > QWidget {{ background: transparent; }}
 
 /* ══════════════════════════ 其它 ══════════════════════════ */
+/* 折叠分组展开后的内容卡片：与 Tab1 QGroupBox 同一套边框/圆角 */
+QWidget#CollapseBody {{
+    background: transparent;
+    border: 1px solid {c['border']};
+    border-radius: 10px;
+}}
 QGroupBox {{
     background: transparent;
     border: 1px solid {c['border']};
