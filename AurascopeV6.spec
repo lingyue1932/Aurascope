@@ -1,10 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Aurascope 打包配置（onedir + 无 UPX）。
+"""Aurascope 打包配置（onedir + 无 UPX + bootloader 启动图）。
 
 为什么不用单文件：单文件每次双击都要把 ~100MB 内容解包到 %TEMP%\_MEIxxxx，
 实测从双击到 main() 写日志要 11.5s；onedir 直接读安装目录，同一台机器降到 0.7s。
 UPX 一并不用：它对启动只有副作用，还容易被杀软误报。
-启动图由 Qt 自绘（ui_components.LoadingSplash），不再用 PyInstaller Splash。
+
+启动图用 PyInstaller 的 Splash（bootloader 直接显示，双击后 0.1s 就出来）：
+Qt 自绘启动图必须等 QApplication 起来，而 DLL 加载 + 杀软扫描那 2~3 秒是空白。
 """
 
 
@@ -28,9 +30,13 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+splash = Splash('splash_boot.png', a.binaries, a.datas)
+
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
+    splash.binaries,
     [],
     name='AurascopeV6.3',
     debug=False,

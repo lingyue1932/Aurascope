@@ -1,16 +1,12 @@
 """UI组件创建函数"""
 
 import os
-import time
 
 from PyQt6.QtWidgets import (QPushButton, QLabel, QSlider, QGroupBox,
                              QCheckBox, QFrame, QMessageBox, QTableWidgetItem,
-                             QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget,
-                             QApplication)
-from PyQt6.QtCore import (QEvent, QObject, QPointF, QRectF, QPropertyAnimation,
-                          Qt, QTimer)
-from PyQt6.QtGui import (QColor, QFontMetrics, QPainter, QPainterPath, QPen,
-                         QPixmap)
+                             QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget)
+from PyQt6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 
 
 def confirm_action(parent, title, text):
@@ -128,121 +124,6 @@ def paint_empty_state(painter, widget, dy=-40):
     from styles import _C
     painter.setPen(QColor(_C['text3']))
     painter.drawText(widget.rect(), Qt.AlignmentFlag.AlignCenter, '请先导入图片')
-
-
-class LoadingSplash(QWidget):
-    """启动画面：透明底公司 logo + 「Aurascope」逐字母点亮。
-
-    窗口无边框 / 半透明 / 置顶；只画一张圆角卡片，logo 用原图透明通道
-    （logo.png 本身已是抠图，透明占比 ~77%），不会再出现白底方块。
-    finish() 后等到最短展示时间再淡出，避免一闪而过看不清。
-    """
-
-    WORD = 'Aurascope'
-    STEP_MS = 60   # 每个字母的间隔
-
-    def __init__(self, logo_width=280):
-        super().__init__(None, Qt.WindowType.Tool
-                         | Qt.WindowType.FramelessWindowHint
-                         | Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowTitle('Aurascope')
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        # 不抢焦点：从资源管理器双击启动时，不能把键盘焦点从用户手里拿走
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setFixedSize(480, 240)
-        self._logo = empty_logo_pixmap(logo_width)
-        self._progress = 0.0
-        self._fade = None
-        self._timer = QTimer(self)
-        self._timer.setInterval(self.STEP_MS)
-        self._timer.timeout.connect(self._advance)
-        self._timer.start()
-        self._center_on_screen()
-
-    def _center_on_screen(self):
-        screen = QApplication.primaryScreen()
-        if screen is None:
-            return
-        area = screen.availableGeometry()
-        self.move(area.center().x() - self.width() // 2,
-                  area.center().y() - self.height() // 2)
-
-    def _advance(self):
-        self._progress += 1.0
-        if self._progress > len(self.WORD) + 2:
-            self._progress = 0.0
-        self.update()
-
-    def pre_animate(self, milliseconds=600):
-        """装配主窗口前先把字母动画跑完。
-
-        主窗口是在事件循环启动前构建的，那段时间定时器不跑；
-        所以这里主动泵事件让字母亮完，窗口一出来就立刻淡出，不拖启动。
-        """
-        deadline = time.monotonic() + milliseconds / 1000.0
-        while time.monotonic() < deadline:
-            QApplication.processEvents()
-            time.sleep(0.008)
-
-    @staticmethod
-    def _blend(start, end, ratio):
-        ratio = max(0.0, min(1.0, ratio))
-        return QColor(
-            int(start.red() + (end.red() - start.red()) * ratio),
-            int(start.green() + (end.green() - start.green()) * ratio),
-            int(start.blue() + (end.blue() - start.blue()) * ratio))
-
-    def paintEvent(self, event):
-        from styles import _C
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-
-        card = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(card, 18, 18)
-        painter.fillPath(path, QColor(_C['surface']))
-        painter.setPen(QPen(QColor(_C['border']), 1))
-        painter.drawPath(path)
-
-        if self._logo is not None:
-            painter.drawPixmap((self.width() - self._logo.width()) // 2, 62,
-                               self._logo)
-
-        font = painter.font()
-        font.setPixelSize(18)
-        font.setBold(True)
-        painter.setFont(font)
-        metrics = QFontMetrics(font)
-        spacing = 4
-        widths = [metrics.horizontalAdvance(ch) for ch in self.WORD]
-        total = sum(widths) + spacing * (len(widths) - 1)
-        x = (self.width() - total) / 2
-        unlit = QColor(_C['border2'])
-        lit = QColor(_C['accent'])
-        for index, char in enumerate(self.WORD):
-            painter.setPen(self._blend(unlit, lit, self._progress - index))
-            painter.drawText(QPointF(x, 184), char)
-            x += widths[index] + spacing
-
-    def finish(self):
-        """主窗口已就绪：直接淡出（字母动画已在 pre_animate 里跑过）。"""
-        self._fade_out()
-
-    def _fade_out(self):
-        self._timer.stop()
-        self._fade = QPropertyAnimation(self, b'windowOpacity', self)
-        self._fade.setDuration(180)
-        self._fade.setStartValue(self.windowOpacity())
-        self._fade.setEndValue(0.0)
-        self._fade.finished.connect(self._dismiss)
-        self._fade.start()
-
-    def _dismiss(self):
-        """隐藏而不是 close：避免触发「最后一个窗口关闭」的退出语义。"""
-        self.hide()
-        self.deleteLater()
 
 
 def enable_click_sort(table, locked=None):
