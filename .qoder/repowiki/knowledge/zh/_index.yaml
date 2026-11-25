@@ -3,26 +3,18 @@ schema_version: 1
 locale: zh-CN
 branch: main
 nodes_managed: true
-exported_at: "2026-11-24T09:32:40Z"
+exported_at: "2026-11-25T03:51:40Z"
 modules:
     "":
-        dir_name: Aurascope 金锡焊空洞分析桌面应用（根模块）
-        title: Aurascope 金锡焊空洞分析桌面应用（根模块）
+        dir_name: Aurascope 微电子封装视觉检测桌面应用
+        title: Aurascope 微电子封装视觉检测桌面应用
         scope:
             - .gitignore
             - AurascopeV6.spec
-            - CHANGELOG.md
             - DESIGN_分块批量空洞分析.md
             - PROJECT_CONCEPTION.md
             - README.md
-            - handoff.md
             - image.py
-            - logo.ico
-            - logo.png
-            - logo.svg
-            - logo_1.ico
-            - logo_innolight.png
-            - main.spec
             - requirements.txt
             - version_info.txt
             - 说明书.md
@@ -38,26 +30,22 @@ modules:
         depends_on: []
         related_to: []
     app_entry_and_core:
-        dir_name: Aurascope 应用启动与核心入口
-        title: Aurascope 应用启动与核心入口
+        dir_name: 应用入口与核心基础设施
+        title: 应用入口与核心基础设施
         scope:
             - main.py
-            - main_window.py
-            - app_paths.py
             - app_version.py
+            - app_paths.py
             - logging_setup.py
             - update_check.py
         source_files: []
         children: []
         depends_on: []
         related_to:
-            - path: canvas_layers
-            - path: teaching_workflow
             - path: tests
-            - path: ui_components_and_dialogs
     canvas_layers:
-        dir_name: 图像画布层（Canvas Layers）
-        title: 图像画布层（Canvas Layers）
+        dir_name: 图像画布交互层
+        title: 图像画布交互层
         scope:
             - canvas.py
             - area_canvas.py
@@ -67,22 +55,23 @@ modules:
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: app_entry_and_core
-            - path: tab_panels
+        related_to: []
     recipes_and_docs:
-        dir_name: 缺陷检测示教配方与多 ROI 设计文档
-        title: 缺陷检测示教配方与多 ROI 设计文档
+        dir_name: 配方样本与工程资产
+        title: 配方样本与工程资产
         scope:
             - recipes/
-            - docs/
+            - README.md
+            - 说明书.md
+            - AurascopeV6.spec
+            - version_info.txt
         source_files: []
         children: []
         depends_on: []
         related_to: []
     tab_panels:
-        dir_name: 缺陷检测与测量页面 Tab 层
-        title: 缺陷检测与测量页面 Tab 层
+        dir_name: 业务页面 Tab 层（缺陷面积 _ 计数 _ 距离 _ 剪切力 _ 拼接 _ 示教批量）
+        title: 业务页面 Tab 层（缺陷面积 / 计数 / 距离 / 剪切力 / 拼接 / 示教批量）
         scope:
             - area_tab.py
             - counting_tab.py
@@ -94,33 +83,26 @@ modules:
         children: []
         depends_on: []
         related_to:
-            - path: canvas_layers
             - path: teaching_workflow
             - path: tests
     teaching_workflow:
         dir_name: 示教与配方流程
         title: 示教与配方流程
         scope:
-            - learn_dialog.py
-            - quick_teach_dialog.py
             - recipe.py
+            - quick_teach_dialog.py
+            - learn_dialog.py
         source_files: []
         children: []
         depends_on: []
         related_to:
-            - path: app_entry_and_core
             - path: tab_panels
-            - path: tests
     tests:
-        dir_name: Aurascope 测试套件（算法 _ UI _ 示教流程 _ 更新检查）
-        title: Aurascope 测试套件（算法 / UI / 示教流程 / 更新检查）
+        dir_name: 缺陷面积与更新检查测试套件
+        title: 缺陷面积与更新检查测试套件
         scope:
             - test_area_tab.py
-            - test_quick_teach.py
-            - test_quick_teach_flow.py
-            - test_stitching.py
             - test_teach_batch_logic.py
-            - test_ui_audit.py
             - test_update_check.py
         source_files: []
         children: []
@@ -128,7 +110,6 @@ modules:
         related_to:
             - path: app_entry_and_core
             - path: tab_panels
-            - path: teaching_workflow
     ui_components_and_dialogs:
         dir_name: UI 组件、样式与对话框
         title: UI 组件、样式与对话框
@@ -140,5 +121,4 @@ modules:
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: app_entry_and_core
+        related_to: []

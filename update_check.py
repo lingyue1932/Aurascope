@@ -7,6 +7,7 @@ draft/prerelease 时才发出 update_found 信号。
 
 import json
 import logging
+import os
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -53,6 +54,17 @@ def should_show_update(info, skipped_version=None):
     return current.base_version != skipped.base_version
 
 
+def pick_update_asset(payload):
+    """从 release 的 assets 里挑出应用内更新用的 .zip 包。"""
+    for asset in (payload.get('assets') or []):
+        name = asset.get('name') or ''
+        url = asset.get('browser_download_url') or ''
+        if name.lower().endswith('.zip') and url:
+            return {'name': name, 'url': url,
+                    'size': int(asset.get('size') or 0)}
+    return None
+
+
 def parse_latest_release(payload):
     """从 GitHub latest release JSON 提取版本/链接/说明；跳过 draft 与 prerelease。"""
     if not isinstance(payload, dict):
@@ -68,6 +80,7 @@ def parse_latest_release(payload):
         'tag': tag,
         'url': payload.get('html_url') or '',
         'notes': payload.get('body') or '',
+        'asset': pick_update_asset(payload),
     }
 
 
@@ -80,7 +93,12 @@ class UpdateChecker(QObject):
         self._manager = QNetworkAccessManager(self)
 
     def check(self, current=APP_VERSION, manual=False):
-        request = QNetworkRequest(QUrl(LATEST_RELEASE_URL))
+        # 开发/验收用：AURASCOPE_UPDATE_JSON 可指向本地或自建的 release JSON，
+        # 复现「发现新版本 → 下载并更新」全链路，不必真的发版。
+        url = os.environ.get('AURASCOPE_UPDATE_JSON') or LATEST_RELEASE_URL
+        if os.environ.get('AURASCOPE_UPDATE_JSON'):
+            logging.getLogger('Aurascope').info('使用自定义更新源：%s', url)
+        request = QNetworkRequest(QUrl(url))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader,
                           'Aurascope-Updater')
         request.setTransferTimeout(8000)

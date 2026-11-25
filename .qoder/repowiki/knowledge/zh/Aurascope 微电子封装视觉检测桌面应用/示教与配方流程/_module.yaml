@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: teaching_workflow
+title: 示教与配方流程
+scope:
+    - recipe.py
+    - quick_teach_dialog.py
+    - learn_dialog.py
+source_files: []
+depends_on: []
+related_to:
+    - path: tab_panels

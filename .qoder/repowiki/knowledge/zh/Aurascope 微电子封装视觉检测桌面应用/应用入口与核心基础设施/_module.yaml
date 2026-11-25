@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: app_entry_and_core
+title: 应用入口与核心基础设施
+scope:
+    - main.py
+    - app_version.py
+    - app_paths.py
+    - logging_setup.py
+    - update_check.py
+source_files: []
+depends_on: []
+related_to:
+    - path: tests

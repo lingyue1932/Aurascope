@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: tests
+title: 缺陷面积与更新检查测试套件
+scope:
+    - test_area_tab.py
+    - test_teach_batch_logic.py
+    - test_update_check.py
+source_files: []
+depends_on: []
+related_to:
+    - path: app_entry_and_core
+    - path: tab_panels

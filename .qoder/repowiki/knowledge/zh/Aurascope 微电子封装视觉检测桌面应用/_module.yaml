@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: ""
+title: Aurascope 微电子封装视觉检测桌面应用
+scope:
+    - .gitignore
+    - AurascopeV6.spec
+    - DESIGN_分块批量空洞分析.md
+    - PROJECT_CONCEPTION.md
+    - README.md
+    - image.py
+    - requirements.txt
+    - version_info.txt
+    - 说明书.md
+source_files: []
+depends_on: []
+related_to: []

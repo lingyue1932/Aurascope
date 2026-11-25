@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: tab_panels
+title: 业务页面 Tab 层（缺陷面积 / 计数 / 距离 / 剪切力 / 拼接 / 示教批量）
+scope:
+    - area_tab.py
+    - counting_tab.py
+    - measure_tab.py
+    - shear_tab.py
+    - stitching_tab.py
+    - teach_batch_tab.py
+source_files: []
+depends_on: []
+related_to:
+    - path: teaching_workflow
+    - path: tests

@@ -56,6 +56,37 @@ class UpdateCheckLogicTests(unittest.TestCase):
         self.assertIsNone(update_check.parse_latest_release({**base, 'prerelease': True}))
         self.assertIsNone(update_check.parse_latest_release({**base, 'tag_name': ''}))
 
+    def test_pick_update_asset_takes_first_zip(self):
+        payload = {'assets': [
+            {'name': 'notes.txt', 'browser_download_url': 'https://x/notes.txt',
+             'size': 10},
+            {'name': 'AurascopeV6.3.1.zip',
+             'browser_download_url': 'https://x/app.zip', 'size': 95},
+        ]}
+        asset = update_check.pick_update_asset(payload)
+        self.assertEqual(asset['name'], 'AurascopeV6.3.1.zip')
+        self.assertEqual(asset['url'], 'https://x/app.zip')
+        self.assertEqual(asset['size'], 95)
+
+    def test_pick_update_asset_returns_none_without_zip(self):
+        self.assertIsNone(update_check.pick_update_asset({'assets': []}))
+        self.assertIsNone(update_check.pick_update_asset({}))
+        self.assertIsNone(update_check.pick_update_asset(
+            {'assets': [{'name': 'app.exe',
+                         'browser_download_url': 'https://x/app.exe'}]}))
+
+    def test_parse_latest_release_carries_asset(self):
+        info = update_check.parse_latest_release({
+            'tag_name': 'v6.3.1', 'html_url': 'https://x', 'body': '',
+            'draft': False, 'prerelease': False,
+            'assets': [{'name': 'AurascopeV6.3.1.zip',
+                        'browser_download_url': 'https://x/app.zip',
+                        'size': 1}]})
+        self.assertEqual(info['asset']['url'], 'https://x/app.zip')
+        self.assertIsNone(update_check.parse_latest_release({
+            'tag_name': 'v6.3.1', 'html_url': 'https://x', 'body': '',
+            'draft': False, 'prerelease': False})['asset'])
+
 
 if __name__ == '__main__':
     unittest.main()

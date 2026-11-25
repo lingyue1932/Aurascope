@@ -1,8 +1,9 @@
 dist/*.exe
 dist/*.exe.bak*
 build/
-# PyInstaller onedir 产物（AurascopeV6.3/ 整个文件夹）
-dist/AurascopeV6*/
+# PyInstaller onedir 产物（dist/Aurascope/）与便携发布包
+dist/Aurascope*/
+dist/*.zip
 __pycache__/
 *.pyc
 

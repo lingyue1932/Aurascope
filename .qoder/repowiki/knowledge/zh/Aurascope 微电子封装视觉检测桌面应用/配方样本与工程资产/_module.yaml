@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: recipes_and_docs
+title: 配方样本与工程资产
+scope:
+    - recipes/
+    - README.md
+    - 说明书.md
+    - AurascopeV6.spec
+    - version_info.txt
+source_files: []
+depends_on: []
+related_to: []

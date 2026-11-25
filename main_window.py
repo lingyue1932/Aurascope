@@ -21,7 +21,7 @@ from PyQt6.QtGui import (QDesktopServices, QIcon, QImage,
                          QKeySequence, QPixmap, QShortcut)
 from PyQt6.QtWidgets import QApplication
 
-from app_paths import resource_path
+from app_paths import app_dir, resource_path
 from csv_export import write_csv
 from styles import STYLESHEET, DIALOG_STYLESHEET
 from app_version import APP_VERSION
@@ -764,23 +764,109 @@ class MainWindow(QMainWindow):
         notes = (info.get('notes') or '').strip()
         detail = f"发现新版本 {info.get('tag', '')}\n\n{notes}" if notes else \
             f"发现新版本 {info.get('tag', '')}"
+        from updater import can_self_update
+        asset = info.get('asset') or {}
+        can_update = can_self_update() and bool(asset.get('url'))
         box = QMessageBox(self)
         box.setWindowTitle('发现新版本')
         box.setIcon(QMessageBox.Icon.Information)
         box.setText(detail)
-        go = box.addButton('前往下载', QMessageBox.ButtonRole.AcceptRole)
+        update_btn = None
+        if can_update:
+            update_btn = box.addButton('下载并更新',
+                                       QMessageBox.ButtonRole.AcceptRole)
+            update_btn.setObjectName('PrimaryBtn')
+        go = box.addButton('前往下载', QMessageBox.ButtonRole.ActionRole)
         skip = box.addButton('忽略本次更新', QMessageBox.ButtonRole.ActionRole)
         later = box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
-        go.setObjectName('PrimaryBtn')
+        go.setObjectName('SecondaryBtn' if update_btn else 'PrimaryBtn')
         skip.setObjectName('SecondaryBtn')
         later.setObjectName('SecondaryBtn')
         box.exec()
         clicked = box.clickedButton()
-        if clicked is go and info.get('url'):
+        if update_btn is not None and clicked is update_btn:
+            self._start_auto_update(info)
+        elif clicked is go and info.get('url'):
             QDesktopServices.openUrl(QUrl(info['url']))
         elif clicked is skip:
             QSettings('Aurascope', 'Aurascope').setValue(
                 'update/skipped_version', info.get('version'))
+
+    # ========== 应用内自更新 ==========
+    def _start_auto_update(self, info):
+        """下载发布包并解压；完成后询问是否立即替换并重启。"""
+        from PyQt6.QtWidgets import QProgressDialog
+        from updater import UpdateDownloader
+
+        asset = info.get('asset') or {}
+        progress = QProgressDialog('正在下载更新…', '取消', 0, 100, self)
+        progress.setWindowTitle('下载更新')
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
+        downloader = UpdateDownloader(self)
+        self._update_downloader = downloader
+
+        def on_progress(received, total):
+            if total > 0:
+                progress.setValue(int(received * 100 / total))
+            else:
+                progress.setLabelText(
+                    f'正在下载更新… {received / 1048576:.0f} MB')
+
+        def on_failed(message):
+            progress.close()
+            downloader.deleteLater()
+            self._update_downloader = None
+            show_warning(self, '更新失败',
+                         f'{message}\n\n可改用「前往下载」手动更新。')
+
+        def on_ready(exe_path):
+            progress.close()
+            downloader.deleteLater()
+            self._update_downloader = None
+            self._apply_update(exe_path)
+
+        downloader.progress.connect(on_progress)
+        downloader.failed.connect(on_failed)
+        downloader.ready.connect(on_ready)
+        progress.canceled.connect(downloader.cancel)
+        downloader.start(asset['url'], info.get('version'))
+
+    def _apply_update(self, exe_path):
+        """退出后由脚本替换安装目录并重启（不需管理员权限）。"""
+        from updater import launch_apply
+
+        source_dir = os.path.dirname(exe_path)
+        target_dir = app_dir()
+        if os.path.normcase(source_dir) == os.path.normcase(target_dir):
+            show_info(self, '更新', '当前已经是最新版本。')
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle('更新已就绪')
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText('更新包已下载完成。\n\n点击「立即重启更新」会关闭当前程序，'
+                    '自动替换文件并重新打开。\n安装目录里的 recipes（示教配方）'
+                    '不会被覆盖。')
+        now = box.addButton('立即重启更新', QMessageBox.ButtonRole.AcceptRole)
+        later = box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
+        now.setObjectName('PrimaryBtn')
+        later.setObjectName('SecondaryBtn')
+        box.exec()
+        if box.clickedButton() is not now:
+            show_info(self, '更新',
+                      '更新包已保留，下次可从「帮助 → 检查更新」重新下载。')
+            return
+        try:
+            # 用新包内的 exe 名启动：版本改了文件名时也能接上
+            launch_apply(source_dir, target_dir, os.path.basename(exe_path))
+        except Exception as exc:
+            logging.getLogger('Aurascope').exception('启动更新脚本失败')
+            show_warning(self, '更新失败', f'无法启动更新脚本：{exc}')
+            return
+        QApplication.instance().quit()
 
     def toggle_steps(self, enabled):
         """切换步骤启用状态"""
