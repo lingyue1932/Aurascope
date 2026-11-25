@@ -3,6 +3,7 @@
 import copy
 import logging
 import os
+import shutil
 import sys
 
 import cv2
@@ -95,6 +96,18 @@ class MainWindow(QMainWindow):
         style_combo_popups(self)
 
         self._restore_window_state()
+
+        # 更新成功后首次启动：给一条轻提示，让用户确认真的更新了
+        if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+            QTimer.singleShot(900, self._notify_updated)
+
+    def _notify_updated(self):
+        try:
+            from updater import consume_update_notice
+            if consume_update_notice():
+                show_toast(self, f'已更新到 Aurascope {APP_VERSION}')
+        except Exception:
+            logging.getLogger('Aurascope').debug('更新提示失败', exc_info=True)
 
     def init_ui(self):
         """初始化UI"""
@@ -827,7 +840,7 @@ class MainWindow(QMainWindow):
             progress.close()
             downloader.deleteLater()
             self._update_downloader = None
-            self._apply_update(exe_path)
+            self._apply_update(exe_path, info)
 
         downloader.progress.connect(on_progress)
         downloader.failed.connect(on_failed)
@@ -835,9 +848,11 @@ class MainWindow(QMainWindow):
         progress.canceled.connect(downloader.cancel)
         downloader.start(asset['url'], info.get('version'))
 
-    def _apply_update(self, exe_path):
-        """退出后由脚本替换安装目录并重启（不需管理员权限）。"""
-        from updater import launch_apply
+    def _apply_update(self, exe_path, info=None):
+        """应用内预复制到 staging，退出后脚本只做几毫秒的改名交换并重启。"""
+        from PyQt6.QtWidgets import QProgressDialog
+        from updater import (launch_swap, stage_files, staging_dir,
+                             tree_size, write_update_notice)
 
         source_dir = os.path.dirname(exe_path)
         target_dir = app_dir()
@@ -847,9 +862,9 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle('更新已就绪')
         box.setIcon(QMessageBox.Icon.Question)
-        box.setText('更新包已下载完成。\n\n点击「立即重启更新」会关闭当前程序，'
-                    '自动替换文件并重新打开。\n安装目录里的 recipes（示教配方）'
-                    '不会被覆盖。')
+        box.setText('更新包已下载完成。\n\n点击「立即重启更新」会先在本机准备好新文件'
+                    '（有进度条），完成后自动重启。\n安装目录里的 recipes'
+                    '（示教配方）不会被覆盖。')
         now = box.addButton('立即重启更新', QMessageBox.ButtonRole.AcceptRole)
         later = box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
         now.setObjectName('PrimaryBtn')
@@ -859,11 +874,52 @@ class MainWindow(QMainWindow):
             show_info(self, '更新',
                       '更新包已保留，下次可从「帮助 → 检查更新」重新下载。')
             return
+
+        # 先把新版本复制到 <安装目录>_new：此时安装目录完全没被动，取消也安全
+        staging = staging_dir(target_dir)
+        total = tree_size(source_dir)
+        dialog = QProgressDialog('正在准备更新文件…', '取消', 0, 100, self)
+        dialog.setWindowTitle('准备更新')
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setValue(0)
+        state = {'cancelled': False}
+
+        def on_progress(done, all_bytes):
+            if all_bytes <= 0:
+                return
+            percent = int(done * 100 / all_bytes)
+            if percent != dialog.value():
+                dialog.setValue(percent)
+                QApplication.processEvents()
+
+        dialog.canceled.connect(lambda: state.__setitem__('cancelled', True))
+        try:
+            copied = stage_files(source_dir, staging, on_progress,
+                                 lambda: state['cancelled'])
+        except Exception as exc:
+            dialog.close()
+            shutil.rmtree(staging, ignore_errors=True)
+            logging.getLogger('Aurascope').exception('更新文件预复制失败')
+            show_warning(self, '更新失败', f'准备更新文件失败：{exc}')
+            return
+        dialog.close()
+        if copied < 0:
+            shutil.rmtree(staging, ignore_errors=True)
+            show_info(self, '更新', '已取消更新，当前版本继续可用。')
+            return
+        logger.info('更新文件已预复制 %d 字节到 %s', copied, staging)
+
+        version = (info or {}).get('version') or ''
+        write_update_notice(version)
         try:
             # 用新包内的 exe 名启动：版本改了文件名时也能接上
-            launch_apply(source_dir, target_dir, os.path.basename(exe_path))
+            launch_swap(staging, target_dir, os.path.basename(exe_path))
         except Exception as exc:
-            logging.getLogger('Aurascope').exception('启动更新脚本失败')
+            shutil.rmtree(staging, ignore_errors=True)
+            logging.getLogger('Aurascope').exception('启动更新交换脚本失败')
             show_warning(self, '更新失败', f'无法启动更新脚本：{exc}')
             return
         QApplication.instance().quit()
