@@ -38,7 +38,7 @@ exe = EXE(
     splash,
     splash.binaries,
     [],
-    name='AurascopeV6.3',
+    name='AurascopeV6.3.1',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -63,5 +63,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='AurascopeV6.3',
+    name='AurascopeV6.3.1',
 )

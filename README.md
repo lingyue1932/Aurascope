@@ -71,7 +71,7 @@ pip install pyinstaller
 pyinstaller AurascopeV6.spec
 ```
 
-产物是 `dist/AurascopeV6.3/` 文件夹，双击其中的 `AurascopeV6.3.exe` 运行。
+产物是 `dist/AurascopeV6.3.1/` 文件夹，双击其中的 `AurascopeV6.3.1.exe` 运行。
 
 > 不要改回单文件（`--onefile`）：单文件每次启动都要把 ~100MB 解包到 `%TEMP%`，实测冷启动到主窗口 11.5s；onedir 为 0.7s。需要“单文件”外观就用安装包工具把该文件夹包起来。
 
