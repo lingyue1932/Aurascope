@@ -25,8 +25,6 @@ logger = logging.getLogger('Aurascope')
 APPLY_SCRIPT = 'apply_update.cmd'
 APPLY_LOG = 'apply.log'
 
-# 等待进程退出 → 覆盖文件 → 启动新版本。
-# %1=PID %2=新版本目录 %3=安装目录 %4=exe 文件名 %5=日志文件
 _APPLY_TEMPLATE = '''@echo off
 setlocal
 set "PID=%~1"
@@ -34,13 +32,18 @@ set "SRC=%~2"
 set "DST=%~3"
 set "EXE=%~4"
 set "LOG=%~5"
+set "TRIES=0"
 echo [%DATE% %TIME%] waiting for pid %PID% >> "%LOG%"
 :wait
 tasklist /FI "PID eq %PID%" 2>nul | findstr /C:"%PID%" >nul
-if not errorlevel 1 (
-  ping -n 2 127.0.0.1 >nul
-  goto wait
-)
+if errorlevel 1 goto ready
+set /a TRIES+=1
+if %TRIES% GEQ 60 goto timeout
+ping -n 2 127.0.0.1 >nul
+goto wait
+:timeout
+echo [%DATE% %TIME%] wait timeout after 60s >> "%LOG%"
+:ready
 echo [%DATE% %TIME%] copying "%SRC%" -^> "%DST%" >> "%LOG%"
 robocopy "%SRC%" "%DST%" /E /IS /IT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1
 if errorlevel 8 (
@@ -53,9 +56,9 @@ if errorlevel 8 (
 endlocal
 '''
 
-# CREATE_NO_WINDOW | DETACHED_PROCESS：脚本不弹黑框，也不随父进程退出而结束
+# 只能用 CREATE_NO_WINDOW：加上 DETACHED_PROCESS 后，脚本里的
+# tasklist | findstr 会一直判定进程仍在（实测挂死），且会弹出可见的控制台窗口
 _NO_WINDOW = 0x08000000
-_DETACHED = 0x00000008
 
 
 def updates_root():
@@ -172,7 +175,7 @@ def launch_apply(source_dir, target_dir, exe_name, pid=None):
     subprocess.Popen(
         ['cmd', '/c', script, str(pid or os.getpid()), source_dir,
          target_dir, exe_name, log],
-        creationflags=_NO_WINDOW | _DETACHED, close_fds=True)
+        creationflags=_NO_WINDOW, close_fds=True)
     logger.info('已启动更新脚本：%s → %s', source_dir, target_dir)
     return script
 
