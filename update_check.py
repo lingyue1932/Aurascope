@@ -6,6 +6,7 @@ draft/prerelease 时才发出 update_found 信号。
 """
 
 import json
+import logging
 
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -72,28 +73,39 @@ def parse_latest_release(payload):
 
 class UpdateChecker(QObject):
     update_found = pyqtSignal(dict)
+    check_finished = pyqtSignal(object, str)   # (info 或 None, 错误文案)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._manager = QNetworkAccessManager(self)
 
-    def check(self, current=APP_VERSION):
+    def check(self, current=APP_VERSION, manual=False):
         request = QNetworkRequest(QUrl(LATEST_RELEASE_URL))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader,
                           'Aurascope-Updater')
         request.setTransferTimeout(8000)
         reply = self._manager.get(request)
-        reply.finished.connect(lambda: self._on_finished(reply, current))
+        reply.finished.connect(lambda: self._on_finished(reply, current, manual))
 
-    def _on_finished(self, reply, current):
+    def _on_finished(self, reply, current, manual=False):
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
+                logging.getLogger('Aurascope').warning(
+                    '检查更新失败：%s', reply.errorString())
+                if manual:
+                    self.check_finished.emit(None, reply.errorString())
                 return
             payload = json.loads(bytes(reply.readAll()).decode('utf-8'))
             info = parse_latest_release(payload)
             if info and release_is_newer(info['tag'], current):
+                logging.getLogger('Aurascope').info(
+                    '发现新版本 %s', info.get('tag'))
                 self.update_found.emit(info)
-        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-            pass
+            elif manual:
+                self.check_finished.emit(None, '')
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            logging.getLogger('Aurascope').warning('检查更新解析失败：%s', exc)
+            if manual:
+                self.check_finished.emit(None, f'返回数据无法解析（{exc}）')
         finally:
             reply.deleteLater()

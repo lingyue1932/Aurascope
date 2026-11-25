@@ -1,0 +1,56 @@
+{
+  "schema_version": 3,
+  "type": "taught",
+  "name": "CP-1",
+  "note": "快速示教：点选 2 个空洞",
+  "updated": "",
+  "solder": {
+    "median": 231.0,
+    "std": 2.0,
+    "p5": 227.0,
+    "p95": 235.0,
+    "threshold": 193.0
+  },
+  "background": {
+    "median": 52.0,
+    "std": 55.9
+  },
+  "void": {
+    "threshold": 163.0,
+    "min_area": 0,
+    "min_area_taught": 6,
+    "max_area": null,
+    "max_area_taught": 26,
+    "min_roundness": 0.0,
+    "depth_offset": 0.0,
+    "taught_count": 2,
+    "median": 71.0
+  },
+  "px_per_um": 0.0,
+  "ref_median": 111.0,
+  "band": {
+    "min_aspect": 3.0,
+    "min_area_frac": 0.01,
+    "open_kernel": 5,
+    "min_thickness_px": 8
+  },
+  "band_ref": {
+    "cx_norm": 0.4863,
+    "cy_norm": 0.4467,
+    "w_norm": 0.9199,
+    "h_norm": 0.1049,
+    "area_frac": 0.07307,
+    "aspect": 7.85
+  },
+  "scale_bar": {
+    "horizontal": true,
+    "dark": true,
+    "length_px": 0.0,
+    "real_um": 0.0
+  },
+  "diagnostics": {
+    "solder_bg_separability": 6.18,
+    "solder_void_separability": 15.4,
+    "bg_same_gray_frac": 0.0
+  }
+}

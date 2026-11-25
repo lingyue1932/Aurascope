@@ -9,6 +9,8 @@ from PyQt6.QtGui import (QColor, QFont, QImage, QPainter, QPainterPath,
                          QPen, QPolygonF)
 from PyQt6.QtWidgets import QWidget
 
+from ui_components import paint_empty_state
+
 
 def mask_to_qimage(mask):
     """局部 mask 逐像素着色；copy 使图像不依赖 numpy 临时内存。"""
@@ -92,6 +94,7 @@ class AreaCanvas(QWidget):
     add_confirm = pyqtSignal()
     add_cancel = pyqtSignal()
     delete_click = pyqtSignal(float, float)
+    empty_import = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -414,8 +417,7 @@ class AreaCanvas(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor('#f0f4f8'))
         if self.img_qt is None:
-            painter.setPen(QColor('#94a3b8'))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, '请先导入图片')
+            paint_empty_state(painter, self)
             return
         painter.save()
         painter.translate(self.offset)

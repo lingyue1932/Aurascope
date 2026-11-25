@@ -6,6 +6,8 @@ from PyQt6.QtWidgets import QWidget, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QRect
 from PyQt6.QtGui import QImage, QPainter, QPen, QColor, QBrush, QFont, QCursor
 
+from ui_components import paint_empty_state
+
 
 # 拼接画布未被图像覆盖处的背景灰度（用户要求深灰 ✗；改这里即可）
 STITCH_BG = 64
@@ -22,6 +24,7 @@ class StitchingCanvas(QWidget):
     
     line_marked = pyqtSignal(int, QPointF, QPointF)  # 标记线完成信号 (image_index, p1, p2)
     stitch_completed = pyqtSignal()  # 拼接完成信号
+    empty_import = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -482,10 +485,7 @@ class StitchingCanvas(QWidget):
         painter.fillRect(self.rect(), QColor('#f0f4f8'))
         
         if not self.images:
-            painter.setPen(QColor('#94a3b8'))
-            font = QFont('Segoe UI', 14)
-            painter.setFont(font)
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, '导入图像后将显示在此处')
+            paint_empty_state(painter, self)
             return
         
         if self.stitched_image is not None:

@@ -1,0 +1,17 @@
+schema_version: 1
+module_path: tests
+title: Aurascope 测试套件（算法 / UI / 示教流程 / 更新检查）
+scope:
+    - test_area_tab.py
+    - test_quick_teach.py
+    - test_quick_teach_flow.py
+    - test_stitching.py
+    - test_teach_batch_logic.py
+    - test_ui_audit.py
+    - test_update_check.py
+source_files: []
+depends_on: []
+related_to:
+    - path: app_entry_and_core
+    - path: tab_panels
+    - path: teaching_workflow

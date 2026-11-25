@@ -2,7 +2,6 @@
 
 import cv2
 import numpy as np
-import pandas as pd
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
@@ -16,6 +15,7 @@ from ui_components import (create_primary_button, create_secondary_button,
                            create_danger_button, create_step_title,
                            create_info_label, create_success_label,
                            create_stat_value)
+from csv_export import write_csv
 from measure_canvas import MeasureCanvas
 
 
@@ -317,5 +317,5 @@ class MeasureTab(QWidget):
                 "终点X": round(x2, 1),
                 "终点Y": round(y2, 1),
             })
-        pd.DataFrame(rows).to_csv(path, index=False, encoding='utf-8-sig')
+        write_csv(path, rows)
         QMessageBox.information(self, "成功", f"已导出 {len(rows)} 条测量数据")

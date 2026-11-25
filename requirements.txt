@@ -1,5 +1,4 @@
 PyQt6>=6.4.0
 opencv-python>=4.8.0
 numpy>=1.24.0
-pandas>=1.5.0
 tifffile>=2023.7.8

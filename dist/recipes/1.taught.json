@@ -1,0 +1,56 @@
+{
+  "schema_version": 3,
+  "type": "taught",
+  "name": "1",
+  "note": "快速示教：点选 2 个空洞",
+  "updated": "",
+  "solder": {
+    "median": 205.0,
+    "std": 16.5,
+    "p5": 170.0,
+    "p95": 218.0,
+    "threshold": 142.0
+  },
+  "background": {
+    "median": 89.0,
+    "std": 15.8
+  },
+  "void": {
+    "threshold": 145.0,
+    "min_area": 0,
+    "min_area_taught": 4,
+    "max_area": null,
+    "max_area_taught": 18,
+    "min_roundness": 0.0,
+    "depth_offset": 0.0,
+    "taught_count": 2,
+    "median": 88.0
+  },
+  "px_per_um": 0.0,
+  "ref_median": 88.0,
+  "band": {
+    "min_aspect": 3.0,
+    "min_area_frac": 0.01,
+    "open_kernel": 5,
+    "min_thickness_px": 8
+  },
+  "band_ref": {
+    "cx_norm": 0.4966,
+    "cy_norm": 0.4929,
+    "w_norm": 0.9019,
+    "h_norm": 0.0168,
+    "area_frac": 0.01162,
+    "aspect": 50.923
+  },
+  "scale_bar": {
+    "horizontal": true,
+    "dark": true,
+    "length_px": 0.0,
+    "real_um": 0.0
+  },
+  "diagnostics": {
+    "solder_bg_separability": 7.18,
+    "solder_void_separability": 4.84,
+    "bg_same_gray_frac": 0.473
+  }
+}

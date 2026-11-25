@@ -17,7 +17,6 @@
 import os
 import numpy as np
 import cv2
-import pandas as pd
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QDialog,QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
@@ -33,6 +32,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QColor, QImage, QPixmap, QIcon, QPainter
 
 from canvas import ImageCanvas
+from csv_export import write_csv
 from image import (polygon_to_mask, otsu_threshold, locate_solder_band,
                    grab_local_dark_blob, learn_taught_model, apply_taught_model,
                    read_scale_bar, resample_polygon_points, two_class_threshold,
@@ -40,12 +40,15 @@ from image import (polygon_to_mask, otsu_threshold, locate_solder_band,
                    render_solder_strip)
 from recipe import (list_recipes, load_recipe, save_taught, load_bar_template,
                     _recipe_root)
-from ui_components import (create_primary_button, create_secondary_button,
-                           create_success_button, create_danger_button,
-                           create_nav_button, create_success_label,
-                           create_success_value, create_step_title,
-                           create_info_label, create_checkbox,
+from ui_components import (NumericItem, align_right, attach_empty_hint,
+                           confirm_action, create_primary_button,
+                           create_secondary_button, create_success_button,
+                           create_danger_button, create_nav_button,
+                           create_success_label, create_success_value,
+                           create_step_title, create_info_label,
+                           create_checkbox, enable_click_sort,
                            CollapsibleSection)
+from ui_dialogs import show_info, show_toast, show_warning
 
 IMG_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
 
@@ -397,7 +400,7 @@ class TeachBatchTab(QWidget):
         row = QHBoxLayout()
         self.btn_del_mark = create_secondary_button("删除选中", self.delete_selected_mark)
         row.addWidget(self.btn_del_mark)
-        self.btn_clear_marks = create_danger_button("清除全部", self.clear_void_marks)
+        self.btn_clear_marks = create_danger_button("清除全部", self.confirm_clear_marks)
         row.addWidget(self.btn_clear_marks)
         s.addLayout(row)
         self.lbl_void = create_info_label("已点选 0 个")
@@ -548,7 +551,7 @@ class TeachBatchTab(QWidget):
         # 汇总（3 行，小字号，避免长串换行错乱）
         head = QHBoxLayout()
         head.setSpacing(10)
-        self.lbl_total = create_success_value("总空洞率: —")
+        self.lbl_total = create_success_value("总空洞率：—")
         head.addWidget(self.lbl_total)
         self.lbl_stats = create_info_label("")
         head.addWidget(self.lbl_stats, 1)
@@ -571,7 +574,7 @@ class TeachBatchTab(QWidget):
         self.thumb_scroll.setWidget(self.thumb_host)
         v.addWidget(self.thumb_scroll)
 
-        self.lbl_preview = create_info_label("预览: 未选择")
+        self.lbl_preview = create_info_label("预览：未选择")
         v.addWidget(self.lbl_preview)
 
         body = QHBoxLayout()
@@ -588,7 +591,10 @@ class TeachBatchTab(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.cellClicked.connect(self.preview_result)
+        attach_empty_hint(self.table, '尚无批量结果；选择批次后点击开始批量')
+        enable_click_sort(
+            self.table, locked=lambda: getattr(self, 'worker', None) is not None)
+        self.table.cellClicked.connect(self._on_table_cell_clicked)
         body.addWidget(self.table, 1)
 
         # 单图核对与修正：2 列网格，按钮不会被挤到重叠
@@ -623,7 +629,7 @@ class TeachBatchTab(QWidget):
         grid.addWidget(self.chk_fill, 3, 0)
         self.btn_apply_edit = create_success_button("应用修改", self.apply_result_edit)
         self.btn_apply_edit.setToolTip("把修正写进结果表与汇总")
-        self.btn_revert_edit = create_danger_button("还原自动", self.revert_result_edit)
+        self.btn_revert_edit = create_danger_button("还原自动", self.confirm_revert_edit)
         self.btn_revert_edit.setToolTip("放弃本图的修正，回到自动检测结果")
         grid.addWidget(self.btn_apply_edit, 2, 0)
         grid.addWidget(self.btn_revert_edit, 2, 1)
@@ -777,7 +783,7 @@ class TeachBatchTab(QWidget):
             return
         img = read_image_file(path)
         if img is None:
-            QMessageBox.warning(self, "错误", "图片加载失败")
+            show_warning(self, "错误", "图片加载失败")
             return
         self.img_cv = img
         self.gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -820,13 +826,13 @@ class TeachBatchTab(QWidget):
         焊层带与均匀亮的邻近区，而空洞锚点可以。
         """
         if self.gray is None:
-            QMessageBox.information(self, "提示", "请先上传样板图")
+            show_info(self, "提示", "请先上传样板图")
             return
         self.btn_poly.setChecked(False)
         self.canvas.mode = 'none'
 
         if not self.void_blobs:
-            QMessageBox.information(
+            show_info(
                 self, "提示",
                 "请先在图上点选 2 个以上典型空洞（②）——程序据此圈定焊层带；\n"
                 "也可以直接用「多边形手绘」。")
@@ -865,18 +871,18 @@ class TeachBatchTab(QWidget):
                     break
             band = best
         if band is None:
-            QMessageBox.warning(
+            show_warning(
                 self, "提示", "未找到焊层带，请用「多边形手绘」框选")
             return
         pts = self._mask_to_polygon(band)
         if len(pts) < 3:
-            QMessageBox.warning(self, "提示", "轮廓提取失败，请改用手绘")
+            show_warning(self, "提示", "轮廓提取失败，请改用手绘")
             return
         self._set_roi(pts, band)
 
     def start_poly_roi(self):
         if self.gray is None:
-            QMessageBox.information(self, "提示", "请先上传样板图")
+            show_info(self, "提示", "请先上传样板图")
             self.btn_poly.setChecked(False)
             return
         self.btn_teach_void.setChecked(False)
@@ -927,7 +933,7 @@ class TeachBatchTab(QWidget):
     def toggle_edit_roi(self):
         """示教焊层区域进入/退出顶点编辑（自动草拟与手绘共用）"""
         if self.gray is None or self.roi_mask is None:
-            QMessageBox.information(self, "提示", "请先自动识别或手绘焊层区域")
+            show_info(self, "提示", "请先自动识别或手绘焊层区域")
             self.btn_edit_roi.setChecked(False)
             return
         on = self.btn_edit_roi.isChecked()
@@ -957,7 +963,7 @@ class TeachBatchTab(QWidget):
 
     def toggle_teach_void(self):
         if self.gray is None:
-            QMessageBox.information(self, "提示", "请先上传样板图")
+            show_info(self, "提示", "请先上传样板图")
             self.btn_teach_void.setChecked(False)
             return
         on = self.btn_teach_void.isChecked()
@@ -984,7 +990,7 @@ class TeachBatchTab(QWidget):
         t_ref = float(np.percentile(self.gray[y1:y2, x1:x2], 85))
         blob, area = grab_local_dark_blob(self.gray, x, y, t_ref)
         if blob is None:
-            QMessageBox.information(self, "提示", "该位置未抓到暗核，请点空洞中心")
+            show_info(self, "提示", "该位置未抓到暗核，请点空洞中心")
             return
         self.void_marks.append((float(x), float(y)))
         self.void_blobs.append(blob)
@@ -1006,7 +1012,7 @@ class TeachBatchTab(QWidget):
         """删除列表中选中的那一个点选（防选错）"""
         item = self.list_marks.currentItem()
         if item is None:
-            QMessageBox.information(self, "提示", "请先在列表中选择要删除的空洞")
+            show_info(self, "提示", "请先在列表中选择要删除的空洞")
             return
         idx = item.data(Qt.ItemDataRole.UserRole)
         if not (0 <= idx < len(self.void_blobs)):
@@ -1039,6 +1045,14 @@ class TeachBatchTab(QWidget):
         self.canvas.fill_voids = self.chk_fill.isChecked()
         self.canvas.update()
 
+    def confirm_clear_marks(self):
+        if self.void_marks and not confirm_action(
+                self, '清除全部点选',
+                '将删除全部已点选的空洞标记，并重新学习。\n此操作不可撤销。'):
+            return False
+        self.clear_void_marks()
+        return True
+
     def clear_void_marks(self):
         self.void_marks = []
         self.void_blobs = []
@@ -1051,7 +1065,7 @@ class TeachBatchTab(QWidget):
 
     def start_calib(self):
         if self.gray is None:
-            QMessageBox.information(self, "提示", "请先上传样板图")
+            show_info(self, "提示", "请先上传样板图")
             self.btn_calib.setChecked(False)
             return
         self.btn_poly.setChecked(False)
@@ -1065,7 +1079,7 @@ class TeachBatchTab(QWidget):
         self.canvas.mode = 'none'
         dist_px = float(np.hypot(p2.x() - p1.x(), p2.y() - p1.y()))
         if dist_px < 5:
-            QMessageBox.warning(self, "提示", "标定线太短，请重画")
+            show_warning(self, "提示", "标定线太短，请重画")
             return
         dialog = QInputDialog(self)
         dialog.setWindowTitle("标定比例尺")
@@ -1111,10 +1125,10 @@ class TeachBatchTab(QWidget):
 
     def on_learn(self):
         if self.gray is None or self.roi_mask is None:
-            QMessageBox.information(self, "提示", "请先完成 ① 上传 和 ③ 焊层区域示范")
+            show_info(self, "提示", "请先完成 ① 上传 和 ③ 焊层区域示范")
             return
         if not self.void_marks:
-            QMessageBox.information(self, "提示", "请先点选至少 1 个典型空洞（②）")
+            show_info(self, "提示", "请先点选至少 1 个典型空洞（②）")
             return
         # 一致性过滤：主体在焊层带外的点选（误点到邻区）不计入空洞类
         kept_marks, kept_blobs, dropped = [], [], 0
@@ -1127,11 +1141,11 @@ class TeachBatchTab(QWidget):
             else:
                 dropped += 1
         if not kept_marks:
-            QMessageBox.warning(
+            show_warning(
                 self, "提示", "所有点选都不在焊层带内，请检查 ② 的点选位置")
             return
         if dropped:
-            QMessageBox.information(
+            show_info(
                 self, "提示", f"有 {dropped} 个点选不在焊层带内，已忽略")
         model = learn_taught_model(
             self.gray, self.roi_mask, kept_marks,
@@ -1142,7 +1156,7 @@ class TeachBatchTab(QWidget):
             bar_dark=(self.bar_info or {}).get('dark', True),
             void_blobs=kept_blobs)
         if model is None:
-            QMessageBox.warning(self, "错误", "学习失败，请检查焊层区域示范是否有效")
+            show_warning(self, "错误", "学习失败，请检查焊层区域示范是否有效")
             return
         model['name'] = self.recipe_name or "未命名示教"
         self._adopt_teach_model(model, 'teach')
@@ -1150,7 +1164,7 @@ class TeachBatchTab(QWidget):
         # 预览：在样板图上回放
         res = apply_taught_model(self.gray, model)
         if not res.get('ok'):
-            QMessageBox.warning(self, "提示",
+            show_warning(self, "提示",
                                 f"学习完成，但在样板图上未定位到焊层带：{res.get('warnings')}")
             return
         self._render_preview(res)
@@ -1177,7 +1191,7 @@ class TeachBatchTab(QWidget):
                                     title="学习过程与参数", parent=self)
             dlg.exec()
         except Exception as e:
-            QMessageBox.information(self, "学习完成",
+            show_info(self, "学习完成",
                                     f"学习完成（过程窗口打开失败：{e}）")
 
     def _render_preview(self, res):
@@ -1191,7 +1205,7 @@ class TeachBatchTab(QWidget):
         self.canvas.draw_voids = draw
         self.canvas.show_labels = True
         self.canvas.fill_voids = self.chk_fill.isChecked()
-        self.canvas.void_rate_text = f"空洞率: {res['void_rate'] * 100:.2f}%"
+        self.canvas.void_rate_text = f"空洞率：{res['void_rate'] * 100:.2f}%"
         self.canvas.update()
 
     def on_save_recipe(self):
@@ -1203,22 +1217,22 @@ class TeachBatchTab(QWidget):
             return
         name = name.strip()
         if not name:
-            QMessageBox.warning(self, "提示", "配方名称不能为空")
+            show_warning(self, "提示", "配方名称不能为空")
             return
         self.recipe_name = name
         self.model['name'] = name
-        self.model['note'] = (f"样板图: {os.path.basename(self.sample_path)}"
+        self.model['note'] = (f"样板图：{os.path.basename(self.sample_path)}"
                               if self.sample_path else "")
         self.model['updated'] = datetime.now().isoformat(timespec='seconds')
         try:
             save_taught(self.model,
                         bar_template=(self.bar_info or {}).get('template'))
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"保存失败: {e}")
+            show_warning(self, "错误", f"保存失败：{e}")
             return
         self.refresh_recipe_combo()
         self._select_recipe(name)
-        QMessageBox.information(self, "成功", f"示教配方「{name}」已保存")
+        show_toast(self, f"示教配方「{name}」已保存")
 
     # ================== 批量检测 ==================
 
@@ -1236,15 +1250,24 @@ class TeachBatchTab(QWidget):
 
     def pick_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择批次文件夹")
-        if not folder:
-            return
+        if folder:
+            self.load_folder(folder)
+
+    def load_folder(self, folder):
+        """载入批次文件夹（选择对话框与「最近打开」共用）。"""
+        if not os.path.isdir(folder):
+            return False
         paths = []
-        for fn in sorted(os.listdir(folder)):
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            return False
+        for fn in names:
             if fn.lower().endswith(IMG_EXTS):
                 paths.append(os.path.join(folder, fn))
         if not paths:
-            QMessageBox.information(self, "提示", "该文件夹下没有图片文件")
-            return
+            show_info(self, "提示", "该文件夹下没有图片文件")
+            return False
         self.batch_paths = paths
         self.batch_dir = folder
         self.lbl_folder.setText(f"已选择 {len(paths)} 张：{os.path.basename(folder)}")
@@ -1259,6 +1282,10 @@ class TeachBatchTab(QWidget):
             self.lbl_quick_teach.setText(
                 f"已自动带出同名配方「{name}」——可直接开始批量；"
                 f"要重做就点上方「快速示教（两步）」")
+        window = self.window()
+        if hasattr(window, 'remember_recent_batch'):
+            window.remember_recent_batch(folder)
+        return True
 
     # ================== 快速设定（免示教路径） ==================
 
@@ -1303,21 +1330,21 @@ class TeachBatchTab(QWidget):
     def on_quick_teach(self):
         """快速示教（两步）：自动挑代表性图 → 弹窗（焊层区域已自动识别 + 点选空洞）→ 整批复用"""
         if not self.batch_paths:
-            QMessageBox.information(self, "提示", "请先选择批次文件夹")
+            show_info(self, "提示", "请先选择批次文件夹")
             return
         setup_path = self._pick_setup_image()
         if not setup_path:
-            QMessageBox.warning(self, "错误", "无法选出用于示教的图片")
+            show_warning(self, "错误", "无法选出用于示教的图片")
             return
         img = read_image_file(setup_path)
         if img is None:
-            QMessageBox.warning(self, "错误", f"图片读取失败：{os.path.basename(setup_path)}")
+            show_warning(self, "错误", f"图片读取失败：{os.path.basename(setup_path)}")
             return
         gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         try:
             from quick_teach_dialog import QuickTeachDialog
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"快速示教模块不可用：{e}")
+            show_warning(self, "错误", f"快速示教模块不可用：{e}")
             return
         suggest = os.path.basename(os.path.normpath(getattr(self, 'batch_dir', '') or ''))
         candidates = self._teach_candidates()
@@ -1326,7 +1353,7 @@ class TeachBatchTab(QWidget):
         while True:
             img_i = read_image_file(setup_path)
             if img_i is None:
-                QMessageBox.warning(self, "错误", "图片读取失败：" + setup_path)
+                show_warning(self, "错误", "图片读取失败：" + setup_path)
                 return
             gray_i = img_i if img_i.ndim == 2 else cv2.cvtColor(img_i, cv2.COLOR_BGR2GRAY)
             dlg = QuickTeachDialog(
@@ -1378,35 +1405,36 @@ class TeachBatchTab(QWidget):
         else:
             fn = self.combo_recipe.currentData()
             if not fn:
-                QMessageBox.information(
+                show_info(
                     self, "提示",
                     "请先选择示教配方，或点「快速示教（弹窗）」/「快速设定（免示教）」")
                 return
             model = load_recipe(fn)
             if model is None or model.get('type') != 'taught':
-                QMessageBox.warning(self, "错误", "配方读取失败或不是示教配方")
+                show_warning(self, "错误", "配方读取失败或不是示教配方")
                 self.refresh_recipe_combo()
                 return
             bar_template = load_bar_template(fn)
         if not self.batch_paths:
-            QMessageBox.information(self, "提示", "请先选择批次文件夹")
+            show_info(self, "提示", "请先选择批次文件夹")
             return
 
         self.batch_results = []
         self.result_edits = {}
         self.preview_row = None
         self._reset_edit_modes()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self._clear_thumbs()
-        self.lbl_total.setText("总空洞率: —")
-        self.lbl_stats.setText("块均值: —")
+        self.lbl_total.setText("总空洞率：—")
+        self.lbl_stats.setText("块均值：—")
         self.btn_export.setEnabled(False)
         self.progress.setValue(0)
         self.btn_run.setEnabled(False)
         self.btn_cancel.setEnabled(True)
         self.preview_row = None
         self._batch_canceled = False
-        self.lbl_preview.setText("预览: 批量进行中…（点缩略图或表格行查看）")
+        self.lbl_preview.setText("预览：批量进行中…（点缩略图或表格行查看）")
         # 缓存本次批量的模型与比例尺模板，预览/导出标注图时按需重算
         self._last_model = model
         self._last_bar_template = bar_template
@@ -1441,15 +1469,40 @@ class TeachBatchTab(QWidget):
         area = (f"{r['solder_area_px']}" if r.get('ok') else '—')
         cnt = (f"{r['void_count']}" if r.get('ok') else '—')
         warn = '；'.join(r.get('warnings') or [])
-        self.table.setItem(row, 0, QTableWidgetItem(r.get('filename', '')))
-        self.table.setItem(row, 1, QTableWidgetItem(area))
-        self.table.setItem(row, 2, QTableWidgetItem(cnt))
-        self.table.setItem(row, 3, QTableWidgetItem(rate))
-        self.table.setItem(row, 4, QTableWidgetItem(warn))
-        if warn:
-            for c in range(5):
-                self.table.item(row, c).setBackground(QColor(254, 249, 195))
+        values = (r.get('filename', ''), area, cnt, rate, warn)
+        sort_values = (row,
+                       r.get('solder_area_px', -1) if r.get('ok') else -1,
+                       r.get('void_count', -1) if r.get('ok') else -1,
+                       r.get('void_rate', -1) if r.get('ok') else -1,
+                       warn)
+        for column, value in enumerate(values):
+            if column in (1, 2, 3):
+                item = NumericItem(value, sort_values[column])
+                align_right(item)
+            else:
+                item = QTableWidgetItem(value)
+            if warn:
+                item.setBackground(QColor(254, 249, 195))
+            if column == 0:
+                item.setData(Qt.ItemDataRole.UserRole, row)
+            self.table.setItem(row, column, item)
         self._add_thumb(row, r)
+
+    def _view_row(self, original):
+        """原始结果序号 → 当前视图行（用户按列排序后仍能定位）。"""
+        for view in range(self.table.rowCount()):
+            item = self.table.item(view, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == original:
+                return view
+        return original if 0 <= original < self.table.rowCount() else -1
+
+    def _on_table_cell_clicked(self, view_row, _column):
+        item = self.table.item(view_row, 0)
+        try:
+            original = int(item.data(Qt.ItemDataRole.UserRole))
+        except (AttributeError, TypeError, ValueError):
+            original = view_row
+        self.preview_result(original)
 
     def on_batch_finished(self, results):
         self.batch_results = results
@@ -1481,12 +1534,12 @@ class TeachBatchTab(QWidget):
             self.preview_result(target)
 
         if self._batch_canceled:
-            QMessageBox.information(
+            show_info(
                 self, "已取消",
                 f"批量已取消，已完成 {len(results)}/{len(self.batch_paths)} 张\n"
                 f"（结果在下方结果区：点缩略图或表格行可逐张核对）")
         else:
-            QMessageBox.information(
+            show_info(
                 self, "完成",
                 f"批量检测完成：{len(results)} 张\n"
                 f"结果在下方结果区：点缩略图（异常描红边）或表格行即可放大核对与修正；\n"
@@ -1595,7 +1648,7 @@ class TeachBatchTab(QWidget):
     def on_batch_failed(self, msg):
         self.btn_run.setEnabled(True)
         self.btn_cancel.setEnabled(False)
-        QMessageBox.warning(self, "错误", f"批量处理出错: {msg}")
+        show_warning(self, "错误", f"批量处理出错：{msg}")
 
     # ---------- 汇总 ----------
 
@@ -1642,10 +1695,10 @@ class TeachBatchTab(QWidget):
     def export_summary_sheet(self):
         """导出"所有图纵向堆叠"的汇总大图，顶部带汇总统计"""
         if not self.batch_results:
-            QMessageBox.information(self, "提示", "请先完成批量检测")
+            show_info(self, "提示", "请先完成批量检测")
             return
         if not any(r.get('ok') for r in self.batch_results):
-            QMessageBox.warning(self, "提示", "没有可导出的成功结果")
+            show_warning(self, "提示", "没有可导出的成功结果")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "导出汇总大图",
@@ -1672,10 +1725,10 @@ class TeachBatchTab(QWidget):
                 entries, self._summary_lines(for_sheet=True),
                 sheet_width=1600, **self._sheet_layout_args())
             if sheet is None:
-                QMessageBox.warning(self, "提示", "汇总图生成失败")
+                show_warning(self, "提示", "汇总图生成失败")
                 return
             if not self._save_png(path, sheet):
-                QMessageBox.warning(self, "汇总大图导出失败",
+                show_warning(self, "汇总大图导出失败",
                                     self._last_save_error or "写入失败")
                 return
         finally:
@@ -1685,7 +1738,7 @@ class TeachBatchTab(QWidget):
                f"大小 {self._kb(real)}")
         if getattr(self, '_last_save_warning', ''):
             msg += "\n\n" + self._last_save_warning
-        QMessageBox.information(self, "完成", msg)
+        show_info(self, "完成", msg)
 
     def _build_solder_strip(self):
         """重算每张图的金锡抠图并拼成横向大图；返回 (strip, err)"""
@@ -1712,10 +1765,10 @@ class TeachBatchTab(QWidget):
         左上角标注与汇总大图一致的统计信息。
         """
         if not self.batch_results:
-            QMessageBox.information(self, "提示", "请先完成批量检测")
+            show_info(self, "提示", "请先完成批量检测")
             return
         if not any(r.get('ok') for r in self.batch_results):
-            QMessageBox.warning(self, "提示", "没有可导出的成功结果")
+            show_warning(self, "提示", "没有可导出的成功结果")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "导出金锡拼接图",
@@ -1727,10 +1780,10 @@ class TeachBatchTab(QWidget):
         try:
             strip, err = self._build_solder_strip()
             if strip is None:
-                QMessageBox.warning(self, "提示", err)
+                show_warning(self, "提示", err)
                 return
             if not self._save_png(path, strip):
-                QMessageBox.warning(self, "金锡拼接图导出失败",
+                show_warning(self, "金锡拼接图导出失败",
                                     self._last_save_error or "写入失败")
                 return
         finally:
@@ -1745,15 +1798,15 @@ class TeachBatchTab(QWidget):
                 else f"\n（复制到剪贴板失败：{why}）")
         if getattr(self, '_last_save_warning', ''):
             msg += "\n\n" + self._last_save_warning
-        QMessageBox.information(self, "完成", msg)
+        show_info(self, "完成", msg)
 
     def view_solder_strip(self):
         """在窗口内预览金锡拼接图（可缩放 / 可另存）"""
         if not self.batch_results:
-            QMessageBox.information(self, "提示", "请先完成批量检测")
+            show_info(self, "提示", "请先完成批量检测")
             return
         if not any(r.get('ok') for r in self.batch_results):
-            QMessageBox.warning(self, "提示", "没有可预览的成功结果")
+            show_warning(self, "提示", "没有可预览的成功结果")
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -1761,7 +1814,7 @@ class TeachBatchTab(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         if strip is None:
-            QMessageBox.warning(self, "提示", err)
+            show_warning(self, "提示", err)
             return
         dlg = QDialog(self)
         dlg.setWindowTitle("金锡拼接图预览")
@@ -1791,9 +1844,9 @@ class TeachBatchTab(QWidget):
                 return
             if self._save_png(path, strip):
                 real = path if path.lower().endswith('.png') else path + '.png'
-                QMessageBox.information(dlg, "完成", f"已保存\n{real}")
+                show_info(dlg, "完成", f"已保存\n{real}")
             else:
-                QMessageBox.warning(dlg, "保存失败",
+                show_warning(dlg, "保存失败",
                                     self._last_save_error or "写入失败")
 
         btn_save.clicked.connect(_save)
@@ -1844,9 +1897,8 @@ class TeachBatchTab(QWidget):
                          '空洞面积(px²)': round(tot_void, 1),
                          '空洞率(%)': round(tot_void / tot_solder * 100, 3) if tot_solder else '',
                          '警告': f"均值{np.mean(rates):.2f}%±{np.std(rates):.2f}%"})
-        df = pd.DataFrame(rows)
-        df.to_csv(path, index=False, encoding='utf-8-sig')
-        QMessageBox.information(self, "成功", f"已导出 {len(rows)} 行")
+        write_csv(path, rows)
+        show_toast(self, f"已导出 {len(rows)} 行")
 
     # ================== 结果预览与标注图导出 ==================
 
@@ -1898,20 +1950,22 @@ class TeachBatchTab(QWidget):
             return
         r = self.batch_results[row]
         self.preview_row = row
-        self.table.selectRow(row)
+        view_row = self._view_row(row)
+        if view_row >= 0:
+            self.table.selectRow(view_row)
         self._mark_thumb_selected(row)
         self._reset_edit_modes()
         if not r.get('ok'):
             self.lbl_preview.setText(
-                f"预览: {r.get('filename', '')} — 处理失败"
+                f"预览：{r.get('filename', '')} — 处理失败"
                 f"（{'；'.join(r.get('warnings') or [])}）")
             return
         img, res = self._rerun_result(row)
         if img is None:
-            self.lbl_preview.setText("预览: 图片读取失败或模型不可用")
+            self.lbl_preview.setText("预览：图片读取失败或模型不可用")
             return
         if res is None:
-            self.lbl_preview.setText(f"预览: {r['filename']} — 未能定位焊层带")
+            self.lbl_preview.setText(f"预览：{r['filename']} — 未能定位焊层带")
             return
         self._preview_gray = img if img.ndim == 2 else cv2.cvtColor(
             img, cv2.COLOR_BGR2GRAY)
@@ -1969,14 +2023,14 @@ class TeachBatchTab(QWidget):
 
     def _refresh_preview_label(self, row, res):
         r = self.batch_results[row]
-        parts = [f"预览: {r['filename']}   空洞率 {res['void_rate'] * 100:.2f}%"]
+        parts = [f"预览：{r['filename']}   空洞率 {res['void_rate'] * 100:.2f}%"]
         if r.get('edited'):
             parts.append(f"【已人工修正 · 面积口径:{r.get('caliber') or '人工修正轮廓'}】")
         else:
             parts.append("面积口径:检测掩码")
         dev = r.get('deviation')
         if dev:
-            parts.append(f"vs示教: 偏移{dev['center_shift'] * 100:.0f}% "
+            parts.append(f"vs示教：偏移{dev['center_shift'] * 100:.0f}% "
                          f"面积×{dev['area_ratio']:.2f} 长宽×{dev['aspect_ratio']:.2f}")
         below = r.get('below_min_area_count') or 0
         above = r.get('above_max_area_count') or 0
@@ -2015,7 +2069,7 @@ class TeachBatchTab(QWidget):
 
     def _require_preview(self):
         if self.preview_row is None or not self.batch_results:
-            QMessageBox.information(self, "提示", "请先点击结果表选中一行")
+            show_info(self, "提示", "请先点击结果表选中一行")
             return False
         return True
 
@@ -2081,7 +2135,7 @@ class TeachBatchTab(QWidget):
         blob, area = grab_local_dark_blob(self._preview_gray, x, y, t_ref,
                                           region_mask=band)
         if blob is None:
-            QMessageBox.information(self, "提示", "该位置未抓到暗核（可能不在焊层带内）")
+            show_info(self, "提示", "该位置未抓到暗核（可能不在焊层带内）")
             return
         cnts, _ = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not cnts:
@@ -2118,18 +2172,18 @@ class TeachBatchTab(QWidget):
             return
         row = self.preview_row
         if not self._edit_polygon or len(self._edit_polygon) < 3:
-            QMessageBox.information(self, "提示", "焊层区域无效（至少 3 个顶点）")
+            show_info(self, "提示", "焊层区域无效（至少 3 个顶点）")
             return
         band = self._edit_mask
         if band is None or cv2.countNonZero(band) == 0:
-            QMessageBox.information(self, "提示", "焊层区域无效")
+            show_info(self, "提示", "焊层区域无效")
             return
         r = self.batch_results[row]
         cur_voids = [(v['id'], round(float(v['area_px']), 3)) for v in self._edit_voids]
         base_voids = self._baseline_voids
         unchanged = (not self._poly_touched) and (cur_voids == base_voids)
         if unchanged:
-            QMessageBox.information(
+            show_info(
                 self, "提示",
                 "没有改动（面积口径：检测掩码，与自动检测一致）")
             return
@@ -2161,17 +2215,30 @@ class TeachBatchTab(QWidget):
         res = {'void_rate': r['void_rate'], 'void_count': r['void_count'],
                'solder_area_px': solder_area, 'caliber': caliber}
         self._refresh_preview_label(row, res)
-        QMessageBox.information(
+        show_info(
             self, "已应用",
             f"已应用修正：空洞率 {r['void_rate'] * 100:.2f}%\n"
             f"面积口径：{caliber}（表格与汇总已更新）")
+
+    def confirm_revert_edit(self):
+        if not self._require_preview():
+            return False
+        if self.preview_row not in self.result_edits:
+            show_info(self, "提示", "该图没有人工修正")
+            return False
+        if not confirm_action(
+                self, '还原自动结果',
+                '将放弃本图的人工修正，恢复为自动检测结果。\n此操作不可撤销。'):
+            return False
+        self.revert_result_edit()
+        return True
 
     def revert_result_edit(self):
         if not self._require_preview():
             return
         row = self.preview_row
         if row not in self.result_edits:
-            QMessageBox.information(self, "提示", "该图没有人工修正")
+            show_info(self, "提示", "该图没有人工修正")
             return
         self.result_edits.pop(row, None)
         r = self.batch_results[row]
@@ -2186,22 +2253,37 @@ class TeachBatchTab(QWidget):
         self._update_table_row(row)
         self._update_summary()
         self.preview_result(row)
-        QMessageBox.information(self, "已还原", "已还原为自动检测结果")
+        show_toast(self, "已还原为自动检测结果")
 
     def _update_table_row(self, row):
         r = self.batch_results[row]
-        if row >= self.table.rowCount():
+        view = self._view_row(row)
+        if view < 0:
             return
         vals = [r.get('filename', ''),
                 f"{r['solder_area_px']}" if r.get('ok') else '—',
                 f"{r['void_count']}" if r.get('ok') else '—',
                 f"{r['void_rate'] * 100:.2f}" if r.get('ok') else '—',
                 '；'.join(r.get('warnings') or [])]
+        sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        sort_vals = (row,
+                     r.get('solder_area_px', -1) if r.get('ok') else -1,
+                     r.get('void_count', -1) if r.get('ok') else -1,
+                     r.get('void_rate', -1) if r.get('ok') else -1,
+                     vals[4])
         for c, val in enumerate(vals):
-            it = QTableWidgetItem(val)
+            if c in (1, 2, 3):
+                it = NumericItem(val, sort_vals[c])
+                align_right(it)
+            else:
+                it = QTableWidgetItem(val)
             if r.get('warnings'):
                 it.setBackground(QColor(254, 249, 195))
-            self.table.setItem(row, c, it)
+            if c == 0:
+                it.setData(Qt.ItemDataRole.UserRole, row)
+            self.table.setItem(view, c, it)
+        self.table.setSortingEnabled(sorting)
 
     def _update_summary(self):
         lines = self._summary_lines()
@@ -2346,12 +2428,12 @@ class TeachBatchTab(QWidget):
     def export_annotated_current(self):
         """导出当前预览图的标注图（PNG）"""
         if self.preview_row is None or not self.batch_results:
-            QMessageBox.information(self, "提示", "请先点击结果表选择一张图")
+            show_info(self, "提示", "请先点击结果表选择一张图")
             return
         r = self.batch_results[self.preview_row]
         img, res = self._rerun_result(self.preview_row)
         if img is None or res is None:
-            QMessageBox.warning(self, "提示", "该图无法重算检测叠加")
+            show_warning(self, "提示", "该图无法重算检测叠加")
             return
         stem = os.path.splitext(r.get('filename', 'result'))[0]
         path, _ = QFileDialog.getSaveFileName(
@@ -2363,21 +2445,21 @@ class TeachBatchTab(QWidget):
                                   lines=self._annotated_lines(r, res))
             real = path if path.lower().endswith('.png') else path + '.png'
             if not self._save_png(path, out):
-                QMessageBox.warning(self, "导出失败",
+                show_warning(self, "导出失败",
                                     f"{self._last_save_error}\n目标：{real}")
                 return
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"导出失败: {e}")
+            show_warning(self, "错误", f"导出失败：{e}")
             return
         msg = f"已导出：{real}\n大小 {self._kb(real)}"
         if getattr(self, '_last_save_warning', ''):
             msg += "\n\n" + self._last_save_warning
-        QMessageBox.information(self, "成功", msg)
+        show_info(self, "成功", msg)
 
     def export_annotated_all(self):
         """批量导出全部图的标注图到指定文件夹（复核/报告用）"""
         if not self.batch_results:
-            QMessageBox.information(self, "提示", "没有可导出的结果")
+            show_info(self, "提示", "没有可导出的结果")
             return
         folder = QFileDialog.getExistingDirectory(self, "选择标注图输出文件夹")
         if not folder:
@@ -2418,7 +2500,7 @@ class TeachBatchTab(QWidget):
             msg += "\n\n" + self._last_save_warning
         if fail_cnt and first_err:
             msg += f"\n\n失败原因（首条）：{first_err}"
-        QMessageBox.information(self, "完成", msg)
+        show_info(self, "完成", msg)
 
     # ================== 状态刷新 ==================
 

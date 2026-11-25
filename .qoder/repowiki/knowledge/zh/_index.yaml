@@ -1,0 +1,144 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+nodes_managed: true
+exported_at: "2026-11-24T09:32:40Z"
+modules:
+    "":
+        dir_name: Aurascope 金锡焊空洞分析桌面应用（根模块）
+        title: Aurascope 金锡焊空洞分析桌面应用（根模块）
+        scope:
+            - .gitignore
+            - AurascopeV6.spec
+            - CHANGELOG.md
+            - DESIGN_分块批量空洞分析.md
+            - PROJECT_CONCEPTION.md
+            - README.md
+            - handoff.md
+            - image.py
+            - logo.ico
+            - logo.png
+            - logo.svg
+            - logo_1.ico
+            - logo_innolight.png
+            - main.spec
+            - requirements.txt
+            - version_info.txt
+            - 说明书.md
+        source_files: []
+        children:
+            - app_entry_and_core
+            - canvas_layers
+            - recipes_and_docs
+            - tab_panels
+            - teaching_workflow
+            - tests
+            - ui_components_and_dialogs
+        depends_on: []
+        related_to: []
+    app_entry_and_core:
+        dir_name: Aurascope 应用启动与核心入口
+        title: Aurascope 应用启动与核心入口
+        scope:
+            - main.py
+            - main_window.py
+            - app_paths.py
+            - app_version.py
+            - logging_setup.py
+            - update_check.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: canvas_layers
+            - path: teaching_workflow
+            - path: tests
+            - path: ui_components_and_dialogs
+    canvas_layers:
+        dir_name: 图像画布层（Canvas Layers）
+        title: 图像画布层（Canvas Layers）
+        scope:
+            - canvas.py
+            - area_canvas.py
+            - counting_canvas.py
+            - measure_canvas.py
+            - stitching_canvas.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_entry_and_core
+            - path: tab_panels
+    recipes_and_docs:
+        dir_name: 缺陷检测示教配方与多 ROI 设计文档
+        title: 缺陷检测示教配方与多 ROI 设计文档
+        scope:
+            - recipes/
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    tab_panels:
+        dir_name: 缺陷检测与测量页面 Tab 层
+        title: 缺陷检测与测量页面 Tab 层
+        scope:
+            - area_tab.py
+            - counting_tab.py
+            - measure_tab.py
+            - shear_tab.py
+            - stitching_tab.py
+            - teach_batch_tab.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: canvas_layers
+            - path: teaching_workflow
+            - path: tests
+    teaching_workflow:
+        dir_name: 示教与配方流程
+        title: 示教与配方流程
+        scope:
+            - learn_dialog.py
+            - quick_teach_dialog.py
+            - recipe.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_entry_and_core
+            - path: tab_panels
+            - path: tests
+    tests:
+        dir_name: Aurascope 测试套件（算法 _ UI _ 示教流程 _ 更新检查）
+        title: Aurascope 测试套件（算法 / UI / 示教流程 / 更新检查）
+        scope:
+            - test_area_tab.py
+            - test_quick_teach.py
+            - test_quick_teach_flow.py
+            - test_stitching.py
+            - test_teach_batch_logic.py
+            - test_ui_audit.py
+            - test_update_check.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_entry_and_core
+            - path: tab_panels
+            - path: teaching_workflow
+    ui_components_and_dialogs:
+        dir_name: UI 组件、样式与对话框
+        title: UI 组件、样式与对话框
+        scope:
+            - ui_components.py
+            - ui_dialogs.py
+            - help_dialogs.py
+            - styles.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: app_entry_and_core

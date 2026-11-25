@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import pandas as pd
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
@@ -9,6 +8,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
 from PyQt6.QtCore import Qt, QTimer
 
 from image import detect_objects, otsu_threshold
+from csv_export import write_csv
 from ui_components import (create_primary_button, create_secondary_button,
                            create_danger_button, create_step_title,
                            create_checkbox, create_slider, create_divider,
@@ -42,6 +42,7 @@ class CountingTab(QWidget):
 
         lo.addWidget(self._build_sidebar())
         self.canvas = CountingCanvas()
+        self.canvas.empty_import.connect(self.load_image)
         lo.addWidget(self.canvas, 1)
 
         self.canvas.roi_rect_finished.connect(self._on_roi_finished)
@@ -163,7 +164,7 @@ class CountingTab(QWidget):
         self.btn_defaults = create_danger_button("恢复默认设置", self._restore_defaults)
         layout.addWidget(self.btn_defaults)
 
-        self.lbl_count = create_count_result("数量: 0")
+        self.lbl_count = create_count_result("数量：0")
         layout.addWidget(self.lbl_count)
 
         self.btn_export = create_secondary_button("导出 CSV", self.export_csv)
@@ -419,7 +420,7 @@ class CountingTab(QWidget):
         self._update_result()
 
     def _update_result(self):
-        self.lbl_count.setText(f"数量: {len(self.objects)}")
+        self.lbl_count.setText(f"数量：{len(self.objects)}")
 
     def export_csv(self):
         if not self.objects:
@@ -441,6 +442,5 @@ class CountingTab(QWidget):
                 '宽度': w,
                 '高度': h,
             })
-        df = pd.DataFrame(data)
-        df.to_csv(path, index=False, encoding='utf-8-sig')
+        write_csv(path, data)
         QMessageBox.information(self, "成功", f"导出 {len(data)} 条数据")

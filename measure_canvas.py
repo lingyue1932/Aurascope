@@ -6,6 +6,8 @@ from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF
 from PyQt6.QtGui import QImage, QPainter, QPen, QColor, QBrush, QFont
 
+from ui_components import paint_empty_state
+
 
 class MeasureCanvas(QWidget):
     calib_drawn = pyqtSignal(QPointF, QPointF)
@@ -209,9 +211,7 @@ class MeasureCanvas(QWidget):
         painter.fillRect(self.rect(), QColor('#f0f4f8'))
 
         if self.img_qt is None:
-            painter.setPen(QColor('#94a3b8'))
-            painter.setFont(QFont('Segoe UI', 14))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, '请先上传图片')
+            paint_empty_state(painter, self)
             return
 
         # ===== 图像坐标绘制 =====

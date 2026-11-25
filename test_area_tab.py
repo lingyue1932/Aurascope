@@ -944,16 +944,16 @@ class AreaUITests(unittest.TestCase):
         self.load()
         self.tab.set_roi_rect((90, 50, 40, 40))
         self.tab.set_roi_rect((0, 0, 50, 50))
-        self.assertIn('ROI 数量: 2', self.tab.lbl_count.text())
+        self.assertIn('ROI 数量：2', self.tab.lbl_count.text())
         QTest.mouseClick(self.tab.btn_clear_roi, Qt.MouseButton.LeftButton)
         self.assertEqual(self.tab.rois, [])
         self.assertEqual(self.tab.roi_table.rowCount(), 0)
         self.assertEqual(self.tab.canvas.roi_entries, [])
-        self.assertIn('ROI 数量: 0', self.tab.lbl_count.text())
+        self.assertIn('ROI 数量：0', self.tab.lbl_count.text())
         self.assertEqual(self.tab.selected_roi_id, -1)
         self.tab.set_roi_rect((90, 50, 40, 40))
         self.assertEqual(self.tab.current_roi()['id'], 1)
-        self.assertIn('ROI 数量: 1', self.tab.lbl_count.text())
+        self.assertIn('ROI 数量：1', self.tab.lbl_count.text())
         self.assertTrue(self.tab.canvas.roi_entries[0]['label'].startswith('ROI 1 '))
 
     def test_roi_append_is_transactional_and_escape_cancels_draft(self):
@@ -1531,7 +1531,7 @@ class AreaUITests(unittest.TestCase):
         self.click(110, 20)
         self.click(10, 40)
         self.click(210, 40)
-        self.assertIn('测量数量: 2', self.tab.lbl_distance_count.text())
+        self.assertIn('测量数量：2', self.tab.lbl_distance_count.text())
         self.assertIn('50.00 mm', self.tab.lbl_distance_min.text())
         self.assertIn('100.00 mm', self.tab.lbl_distance_max.text())
         self.assertIn('75.00 mm', self.tab.lbl_distance_mean.text())
@@ -1552,7 +1552,7 @@ class AreaUITests(unittest.TestCase):
         self.assertEqual(rows[1][2], '100.0')
         self.assertEqual(rows[1][-1], '水平')
         QTest.mouseClick(self.tab.btn_clear_distances, Qt.MouseButton.LeftButton)
-        self.assertIn('测量数量: 0', self.tab.lbl_distance_count.text())
+        self.assertIn('测量数量：0', self.tab.lbl_distance_count.text())
         self.assertEqual(self.tab.distance_table.rowCount(), 0)
 
     def test_sidebar_sections_collapsible_with_core_expanded(self):

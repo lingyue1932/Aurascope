@@ -6,6 +6,9 @@ from PyQt6.QtWidgets import QWidget, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QRectF, QRect, QTimer
 from PyQt6.QtGui import QImage, QPainter, QPen, QColor, QBrush, QFont, QCursor, QPixmap
 
+from app_paths import resource_path
+from ui_components import paint_empty_state
+
 
 class ImageCanvas(QWidget):
     """图像显示和交互画布"""
@@ -22,6 +25,7 @@ class ImageCanvas(QWidget):
     void_local_threshold_changed = pyqtSignal(int, int)  # region_index, new_thresh
     void_local_region_removed = pyqtSignal(int)  # region_index
     teach_void_at = pyqtSignal(float, float)     # 示教点选空洞（图像坐标）
+    empty_import = pyqtSignal()                  # 空状态「导入图片」
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,14 +34,6 @@ class ImageCanvas(QWidget):
 
         self.img_cv = None
         self.img_qt = None
-
-        self.logo = None
-        try:
-            pixmap = QPixmap("logo.png")
-            if not pixmap.isNull():
-                self.logo = pixmap.scaled(400, 400, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        except:
-            pass
 
         self.scale = 1.0
         self.offset = QPointF(0, 0)
@@ -704,17 +700,7 @@ class ImageCanvas(QWidget):
         painter.fillRect(self.rect(), QColor('#f0f4f8'))
 
         if self.img_qt is None:
-            if self.logo:
-                logo_x = (self.width() - self.logo.width()) // 2
-                logo_y = (self.height() - self.logo.height()) // 2 - 40
-                painter.drawPixmap(logo_x, logo_y, self.logo)
-            painter.setPen(QColor('#94a3b8'))
-            font = QFont('Segoe UI', 14)
-            painter.setFont(font)
-            rect = self.rect()
-            if self.logo:
-                rect = QRect(0, logo_y + self.logo.height() + 20, self.width(), 40)
-            # painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, '点击左侧按钮上传图片')
+            paint_empty_state(painter, self)
             return
 
         painter.save()

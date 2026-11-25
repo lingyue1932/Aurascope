@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: tab_panels
+title: 缺陷检测与测量页面 Tab 层
+scope:
+    - area_tab.py
+    - counting_tab.py
+    - measure_tab.py
+    - shear_tab.py
+    - stitching_tab.py
+    - teach_batch_tab.py
+source_files: []
+depends_on: []
+related_to:
+    - path: canvas_layers
+    - path: teaching_workflow
+    - path: tests

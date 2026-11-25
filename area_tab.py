@@ -1,6 +1,7 @@
 """缺陷面积测量：原图像素检测、可选标定、ROI、手动修正及 CSV。"""
 
 import csv
+import logging
 import math
 import os
 from datetime import datetime
@@ -19,10 +20,12 @@ from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QDialog
 
 from area_canvas import AreaCanvas, hit_index, mask_hit
 from image import detect_defects, otsu_threshold, polygon_to_mask
-from ui_components import (CollapsibleSection, create_checkbox, create_groupbox,
-                           create_info_label, create_primary_button,
-                           create_secondary_button, create_slider,
-                           create_slider_with_label)
+from ui_components import (CollapsibleSection, NumericItem, align_right,
+                           attach_empty_hint, confirm_action, create_checkbox,
+                           create_groupbox, create_info_label,
+                           create_primary_button, create_secondary_button,
+                           create_slider, create_slider_with_label,
+                           enable_click_sort)
 
 
 UNIT_FACTORS = {'nm': 1e-3, 'µm': 1., 'mm': 1e3, 'cm': 1e4, 'm': 1e6}
@@ -131,6 +134,7 @@ class DefectAreaTab(QWidget):
         self._batch_timer.setInterval(0)
         self._batch_timer.timeout.connect(self._run_next_batch)
         self.canvas = AreaCanvas(self)
+        self.canvas.empty_import.connect(self.load_image)
         self._build_ui()
         self.canvas.calib_drawn.connect(self.calibrate)
         self.canvas.distance_added.connect(self.add_distance)
@@ -202,11 +206,11 @@ class DefectAreaTab(QWidget):
         self.btn_clear_distances = create_secondary_button('清空测距', self.clear_distances)
         distance.addWidget(self.btn_clear_distances)
         distance.addWidget(create_info_label('标定后依次点击两点；小于 7° 自动水平或垂直。'))
-        self.lbl_distance_count = create_info_label('测量数量: 0')
-        self.lbl_distance_min = create_info_label('最小距离: —')
-        self.lbl_distance_max = create_info_label('最大距离: —')
-        self.lbl_distance_mean = create_info_label('平均距离: —')
-        self.lbl_distance_total = create_info_label('总距离: —')
+        self.lbl_distance_count = create_info_label('测量数量：0')
+        self.lbl_distance_min = create_info_label('最小距离：—')
+        self.lbl_distance_max = create_info_label('最大距离：—')
+        self.lbl_distance_mean = create_info_label('平均距离：—')
+        self.lbl_distance_total = create_info_label('总距离：—')
         for label in (self.lbl_distance_count, self.lbl_distance_min,
                       self.lbl_distance_max, self.lbl_distance_mean,
                       self.lbl_distance_total):
@@ -217,6 +221,8 @@ class DefectAreaTab(QWidget):
         self.distance_table.verticalHeader().setVisible(False)
         self.distance_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.distance_table.setMinimumHeight(120)
+        attach_empty_hint(self.distance_table, '尚未测量；标定后依次点击两点')
+        enable_click_sort(self.distance_table)
         distance.addWidget(self.distance_table)
         self.btn_export_distances = create_secondary_button('导出距离 CSV', lambda: self.export_distance_csv())
         distance.addWidget(self.btn_export_distances)
@@ -231,7 +237,7 @@ class DefectAreaTab(QWidget):
         roi_row2 = QHBoxLayout()
         roi_row2.setSpacing(8)
         self.btn_delete_roi = create_secondary_button('删除当前 ROI', self.delete_current_roi)
-        self.btn_clear_roi = create_secondary_button('清空全部 ROI', self.clear_roi)
+        self.btn_clear_roi = create_secondary_button('清空全部 ROI', self.confirm_clear_roi)
         roi_row2.addWidget(self.btn_delete_roi)
         roi_row2.addWidget(self.btn_clear_roi)
         roi_row2.setStretch(0, 1)
@@ -240,7 +246,7 @@ class DefectAreaTab(QWidget):
         detection = group('阈值检测', expanded=True)
         self.lbl_current_roi = create_info_label('当前 ROI：未选择')
         detection.addWidget(self.lbl_current_roi)
-        self.btn_detect = create_primary_button('检测全部 ROI', self.toggle_detection)
+        self.btn_detect = create_primary_button('检测全部 ROI', self.confirm_toggle_detection)
         detection.addWidget(self.btn_detect)
         detection.addWidget(create_info_label('先框选 ROI，再开始检测；导入图片不会自动检测。'))
         self.chk_bright = create_checkbox('检测亮色缺陷', True, self.schedule_detection)
@@ -287,6 +293,8 @@ class DefectAreaTab(QWidget):
         self.roi_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.roi_table.itemSelectionChanged.connect(self.select_roi_from_table)
         self.roi_table.setMinimumHeight(130)
+        attach_empty_hint(self.roi_table, '尚未框选 ROI；在画布上拖出矩形或多边形')
+        enable_click_sort(self.roi_table)
         results.addWidget(self.roi_table)
         results.addWidget(create_info_label('当前 ROI 缺陷明细'))
         self.table = QTableWidget(0, 4)
@@ -299,6 +307,8 @@ class DefectAreaTab(QWidget):
         self.table.itemSelectionChanged.connect(self.select_object)
         self.table.setMinimumHeight(160)
         self.table.setMinimumWidth(0)
+        attach_empty_hint(self.table, '当前 ROI 暂无缺陷')
+        enable_click_sort(self.table)
         results.addWidget(self.table)
         self.btn_export = create_secondary_button('导出 CSV', lambda: self.export_csv())
         results.addWidget(self.btn_export)
@@ -340,6 +350,7 @@ class DefectAreaTab(QWidget):
             img, note = _read_image(path)
             gray = img.copy() if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         except (OSError, ValueError, cv2.error, zlib.error, ImportError) as exc:
+            logging.getLogger('Aurascope').warning('ROI 图片加载失败：%s（%s）', path, exc)
             self._status(f'图片加载失败：{exc}', error=True)
             return False
         self._detect_timer.stop()
@@ -360,6 +371,10 @@ class DefectAreaTab(QWidget):
         self.lbl_calib.setText('未标定')
         self._refresh_results()
         self._status(f'已加载 {Path(path).name}（{gray.shape[1]} × {gray.shape[0]} px）{note}；请先框选 ROI，再点击开始检测')
+        window = self.window()
+        if hasattr(window, 'remember_recent_image'):
+            window.remember_recent_image(path)
+        logging.getLogger('Aurascope').info('ROI 加载图片：%s', path)
         return True
 
     def _ask_calibration(self):
@@ -456,26 +471,32 @@ class DefectAreaTab(QWidget):
 
     def _refresh_distance_results(self):
         count = len(self.measurements)
-        self.lbl_distance_count.setText(f'测量数量: {count}')
+        self.lbl_distance_count.setText(f'测量数量：{count}')
         stats = (self.lbl_distance_min, self.lbl_distance_max,
                  self.lbl_distance_mean, self.lbl_distance_total)
         prefixes = ('最小距离', '最大距离', '平均距离', '总距离')
         if count == 0 or self.unit_per_px is None:
             for label, prefix in zip(stats, prefixes):
-                label.setText(f'{prefix}: —')
+                label.setText(f'{prefix}：—')
         else:
             values = [item['dist_px'] * self.unit_per_px for item in self.measurements]
             results = (min(values), max(values), float(np.mean(values)), sum(values))
             for label, prefix, value in zip(stats, prefixes, results):
-                label.setText(f'{prefix}: {value:.2f} {self.unit}')
+                label.setText(f'{prefix}：{value:.2f} {self.unit}')
         self.distance_table.setHorizontalHeaderLabels(['#', f'距离 ({self.unit})', '距离 (px)'])
         self.distance_table.setRowCount(count)
         for row, item in enumerate(self.measurements):
             real = item['dist_px'] * (self.unit_per_px or 0)
             values = (str(item['id']), f'{real:.2f}', f"{item['dist_px']:.1f}")
+            sort_values = (item['id'], real, item['dist_px'])
             for column, value in enumerate(values):
-                cell = QTableWidgetItem(value)
+                cell = NumericItem(value, sort_values[column])
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if column:
+                    align_right(cell)
+                else:
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter |
+                                          Qt.AlignmentFlag.AlignVCenter)
                 self.distance_table.setItem(row, column, cell)
 
     def export_distance_csv(self, path=None):
@@ -686,6 +707,18 @@ class DefectAreaTab(QWidget):
         self._batch_timer.stop()
         self._batch_active = False
 
+    def confirm_clear_roi(self):
+        """清空全部 ROI（不可撤销，先确认）。"""
+        if not self.rois:
+            self._status('当前没有 ROI 可清空')
+            return False
+        if not confirm_action(
+                self, '清空全部 ROI',
+                '将删除全部 ROI 及其检测结果（含手动增删）。\n'
+                '图片和标定会保留，此操作不可撤销。'):
+            return False
+        return self.clear_roi()
+
     def clear_roi(self):
         if self.gray is None:
             return False
@@ -714,6 +747,17 @@ class DefectAreaTab(QWidget):
                 x, y, w, h = obj['rect']
                 union[y:y + h, x:x + w] |= obj['mask']
         return cv2.countNonZero(union)
+
+    def confirm_toggle_detection(self):
+        """「检测全部 ROI / 停止并清空」按钮入口：停止清空先确认。"""
+        has_pending = any(roi['status'] == 'pending' for roi in self.rois)
+        stopping = self._batch_active or (self._analysis_active and not has_pending)
+        if stopping and not confirm_action(
+                self, '停止并清空',
+                '将停止检测并清空全部 ROI 的检测结果（含手动增删）。\n'
+                'ROI 与参数会保留，此操作不可撤销。'):
+            return False
+        return self.toggle_detection()
 
     def toggle_detection(self):
         has_pending = any(roi['status'] == 'pending' for roi in self.rois)
@@ -781,6 +825,8 @@ class DefectAreaTab(QWidget):
                 self.gray, params['threshold'], params['bright'],
                 params['min_area'], roi['mask'])
         except (ValueError, cv2.error) as exc:
+            logging.getLogger('Aurascope').warning(
+                'ROI %s 检测失败：%s', roi['id'], exc)
             roi['objects'] = []
             roi['status'] = 'error'
             roi['manual_changed'] = False
@@ -870,11 +916,11 @@ class DefectAreaTab(QWidget):
         total_px = self.union_area_px()
         total = self._area_label(total_px)
         suffix = '（未标定）' if self.unit_per_px is None else ''
-        summary = f'全部 ROI 总面积（重叠去重）: {total} · {len(self.rois)} 个区域{suffix}'
+        summary = f'全部 ROI 总面积（重叠去重）：{total} · {len(self.rois)} 个区域{suffix}'
         current = self.current_roi()
         current_objects = [] if current is None else current['objects']
-        self.lbl_count.setText(f"ROI 数量: {len(self.rois)} · 当前框缺陷: {len(current_objects)}")
-        self.lbl_total.setText(f'全部 ROI 总面积（重叠去重）: {total}{suffix}')
+        self.lbl_count.setText(f"ROI 数量：{len(self.rois)} · 当前框缺陷：{len(current_objects)}")
+        self.lbl_total.setText(f'全部 ROI 总面积（重叠去重）：{total}{suffix}')
         self.lbl_current_roi.setText(
             '当前 ROI：未选择' if current is None else f"当前 ROI：{current['id']}")
         has_pending = any(roi['status'] == 'pending' for roi in self.rois)
@@ -882,22 +928,32 @@ class DefectAreaTab(QWidget):
             '停止并清空' if self._batch_active or (self._analysis_active and not has_pending)
             else '检测全部 ROI')
 
+        sorting = self.roi_table.isSortingEnabled()
+        self.roi_table.setSortingEnabled(False)
         self.roi_table.blockSignals(True)
         self.roi_table.setRowCount(len(self.rois))
-        selected_row = -1
         status_text = {'pending': '待检测', 'active': '已检测', 'error': '检测失败'}
         entries = []
         for row, roi in enumerate(self.rois):
-            if roi['id'] == self.selected_roi_id:
-                selected_row = row
             params = roi['params']
             values = (
                 f"ROI {roi['id']}", status_text[roi['status']], str(params['threshold']),
                 '亮' if params['bright'] else '暗', str(params['min_area']),
                 str(len(roi['objects'])), self._area_label(roi['area_px']))
+            sort_values = (roi['id'], values[1], params['threshold'],
+                           values[3], params['min_area'],
+                           len(roi['objects']), roi['area_px'])
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                if column in (0, 2, 4, 5, 6):
+                    item = NumericItem(value, sort_values[column])
+                else:
+                    item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if column in (2, 4, 5, 6):
+                    align_right(item)
+                elif column in (1, 3):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter |
+                                          Qt.AlignmentFlag.AlignVCenter)
                 if column == 0:
                     item.setData(Qt.ItemDataRole.UserRole, roi['id'])
                 self.roi_table.setItem(row, column, item)
@@ -905,36 +961,63 @@ class DefectAreaTab(QWidget):
                      else f"ROI {roi['id']} 检测失败" if roi['status'] == 'error'
                      else f"ROI {roi['id']} {self._area_label(roi['area_px'])}")
             entries.append({'id': roi['id'], 'roi': roi['roi'], 'label': label})
+        self.roi_table.blockSignals(False)
+        self.roi_table.setSortingEnabled(sorting)
+        selected_row = -1
+        for row in range(self.roi_table.rowCount()):
+            item = self.roi_table.item(row, 0)
+            if (item is not None and item.data(Qt.ItemDataRole.UserRole)
+                    == self.selected_roi_id):
+                selected_row = row
+                break
         if selected_row >= 0:
             self.roi_table.selectRow(selected_row)
         else:
             self.roi_table.clearSelection()
-        self.roi_table.blockSignals(False)
         self.canvas.set_rois(entries, self.selected_roi_id)
         self.canvas.set_objects(self.objects, summary)
 
+        sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.blockSignals(True)
         self.table.setRowCount(len(current_objects))
         for row, obj in enumerate(current_objects):
+            index = next((i for i, candidate in enumerate(self.objects)
+                          if candidate is obj), -1)
+            area = compute_real_area(obj['area_px'], self.unit_per_px)
             values = (str(obj['id']), str(obj['area_px']),
-                      '未标定' if self.unit_per_px is None else self._area_label(obj['area_px']),
+                      '未标定' if area is None else self._area_label(obj['area_px']),
                       obj.get('source', '自动'))
+            sort_values = (obj['id'], obj['area_px'],
+                           area if area is not None else obj['area_px'],
+                           obj.get('source', '自动'))
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
+                if column in (0, 1, 2):
+                    item = NumericItem(value, sort_values[column])
+                else:
+                    item = QTableWidgetItem(value)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if column in (1, 2):
+                    align_right(item)
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, index)
                 self.table.setItem(row, column, item)
         self.table.blockSignals(False)
+        self.table.setSortingEnabled(sorting)
         self.btn_measure.setEnabled(self.unit_per_px is not None)
         self._refresh_distances()
 
     def select_object(self):
         rows = self.table.selectionModel().selectedRows()
-        current = self.current_roi()
         index = -1
-        if current is not None and len(rows) == 1:
-            obj = current['objects'][rows[0].row()]
-            index = next((i for i, candidate in enumerate(self.objects)
-                          if candidate is obj), -1)
+        if len(rows) == 1:
+            item = self.table.item(rows[0].row(), 0)
+            try:
+                index = int(item.data(Qt.ItemDataRole.UserRole))
+            except (AttributeError, TypeError, ValueError):
+                index = -1
+        if not 0 <= index < len(self.objects):
+            index = -1
         if index != self.canvas.selected_index:
             self.canvas.selected_index = index
             self.canvas.update()

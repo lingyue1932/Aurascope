@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: canvas_layers
+title: 图像画布层（Canvas Layers）
+scope:
+    - canvas.py
+    - area_canvas.py
+    - counting_canvas.py
+    - measure_canvas.py
+    - stitching_canvas.py
+source_files: []
+depends_on: []
+related_to:
+    - path: app_entry_and_core
+    - path: tab_panels

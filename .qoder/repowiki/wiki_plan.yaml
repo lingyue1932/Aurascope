@@ -1,0 +1,57 @@
+version: 1
+
+# ── 文件范围 ──────────────────────────────────────────────────────────────────
+# 在 .qoderignore 之上再叠加一层过滤：排除虚拟环境、构建产物、历史备份与临时目录
+scope:
+  include: []
+  exclude:
+    - "venv/"
+    - "build/"
+    - "dist/"
+    - "__pycache__/"
+    - ".workbuddy/"
+    - "tmp*/"
+    - "*.bak*"
+    - "*bak*.py"
+    - ".mw_bak.py"
+    - "recipes/*.png"
+    - "AuscopeV5.py"
+    - "筛选压缩包纯数字图片.py"
+
+# ── RepoWiki 文档 ─────────────────────────────────────────────────────────────
+repowiki:
+  # 架构技术文档口径：分层、模块职责、交互链路、设计决策与技术债
+  template: architecture
+
+  # 页面目录留空 → 由模型按代码证据自动规划（不使用白名单）
+  documents: []
+
+  notes:
+    - text: "项目为 Aurascope（历史文档中称「金锡焊空洞分析」），PyQt6 + OpenCV + NumPy + Pandas 的单机桌面应用；不联网、不收集用户数据、纯 CPU 计算、兼容 Windows 7+。产品定位与用户价值以 README.md、PROJECT_CONCEPTION.md 为叙述依据，代码结构一律以实际源码为准。"
+    - text: "文档按「入口 → 主窗口 → Tab 页面 → Canvas 绘制层 → 算法层 image.py → 配方/导出」分层组织，并显式标注依赖方向：GUI 层不得内联实现图像算法。"
+    - text: "七条业务主线须把页面文件、画布文件、算法函数、配方与导出产物一一对应：空洞分析（canvas.py + main_window.py）、缺陷面积多 ROI（area_tab.py / area_canvas.py）、物料计数（counting_tab.py / counting_canvas.py）、测距（measure_tab.py / measure_canvas.py）、剪切力（shear_tab.py）、图像拼接（stitching_tab.py / stitching_canvas.py）、批量示教（teach_batch_tab.py + recipe.py）。"
+    - text: "image.py 是唯一算法实现层，涵盖阈值/Otsu、形态学去噪、轮廓与圆度、distanceTransform 计数、Canny 边缘校验与面积统计；main_window.py 内另有一份 detect_voids_local 副本属已知技术债，文档须写明「现行行为以 image.py 为准，两份待合并」。"
+    - text: "Canvas 层统一为 QWidget + QPainter 自绘，共享原图坐标↔屏幕坐标转换、滚轮缩放、右键平移、多边形 ROI 编辑约定；描述缩放锚点时须点出 canvas.py 存在 Y 轴漂移的已知问题，不要把现状写成正确设计。"
+    - text: "UI 层约定：styles.py 提供全局 QSS 与设计 token，ui_components.py 的 create_* 工厂函数只创建控件、不加入布局，调用方必须手动 addWidget；create_groupbox() 必须使用 Preferred/Expanding 尺寸策略，否则控件被静默裁剪。此三条为强制约定，需写入编码规范章节。"
+    - text: "缺陷面积页（area_tab.py / area_canvas.py）的 UI 权威契约是技能文档 .qoder/skills/roi-page-ui-design/SKILL.md；涉及该页的章节必须引用它，不得另立一套设计语言。"
+    - text: "示教配方以 JSON 落盘于 recipes/，结构定义与读写逻辑在 recipe.py；缺陷面积多 ROI 的规格与实施计划位于 docs/superpowers/specs 与 docs/superpowers/plans，可作为设计意图的旁证（以代码实现为最终结论）。"
+    - text: "资源与用户数据路径统一由 app_paths.py 解析（需区分源码运行与 PyInstaller 打包两种 base 目录）；版本号分散在 app_version.py 与 version_info.txt，打包入口为 main.spec / AurascopeV6.spec。"
+    - text: "撰写「已知限制」章节时以 handoff.md 的清单为准并注明出处：重复 detect_voids_local、edge_map 未初始化导致 Canny 校验静默失效、chk_roi_overlay 被重复创建、滚轮缩放 Y 漂移、select_for_local 为无 UI 入口的死代码、大图增强检测无进度提示。"
+    - text: "测试为仓库根目录下的 pytest 风格单测（test_*.py），部分用例依赖 QApplication；仓库内无 CI 配置，不要虚构流水线、覆盖率门槛或发布流程。"
+    - text: "输出语言为中文，代码标识符、OpenCV API、QSS 属性名、文件名保持英文/原文；引用代码时给出相对仓库根的路径，不要编造不存在的模块或函数。"
+    - text: "历史备份（*.bak_light、*.bak_20261016、learn_dialog_bak.py、.mw_bak.py、logo.*.bak）、临时目录（tmp*/）、AuscopeV5.py 与「筛选压缩包纯数字图片.py」均非现行实现，已从 scope 排除，不得作为行为依据。"
+
+# ── 知识卡 ───────────────────────────────────────────────────────────────────
+knowledgecard:
+  notes:
+    - text: "通用约定：模块标题用中文语义名，dir_name 保持 ASCII；scope 使用相对仓库根的正斜杠路径；每个模块至少一张「概述」卡，再按需补「架构设计 / 技术栈 / 编码规范 / 特殊配置与命令」，单卡只讲一个主题，禁止逐文件逐行复述。"
+    - text: "模块 app_entry_and_core「应用入口与核心基础设施」：main.py、app_version.py、app_paths.py、logging_setup.py、update_check.py。讲清启动装配顺序、源码/打包两种路径解析、日志落盘位置、更新检查失败时的降级行为。"
+    - text: "新增模块 main_window_shell「主窗口装配与空洞分析页」：main_window.py（约 1700 行单体文件）。卡片须明确它承担 Tab 装配、空洞分析业务逻辑与局部阈值笔刷状态，并说明它与 area_tab.py、canvas.py、image.py 的职责切分及重复 detect_voids_local 的技术债。"
+    - text: "新增模块 algorithm_layer「算法层」：image.py。按阈值分割 / 形态学去噪 / 轮廓与圆度过滤 / distanceTransform 计数 / Canny 边缘校验 / 面积与统计汇总 分组说明函数职责、关键入参（如 morph_shape、圆度阈值）与返回结构（轮廓列表 + 掩码/统计），不要逐个函数翻译代码。"
+    - text: "模块 canvas_layers「画布层」：canvas.py、area_canvas.py、counting_canvas.py、measure_canvas.py、stitching_canvas.py。重点写共享基元（坐标转换、缩放平移、ROI 编辑、撤销栈）与各画布特有交互（局部阈值笔刷、删除悬停高亮、标定参考线、拼接预览）。"
+    - text: "模块 tab_panels「页面 Tab 层」：area_tab.py、counting_tab.py、measure_tab.py、shear_tab.py、stitching_tab.py、teach_batch_tab.py。每页说明控件分组、参数→算法→画布刷新的数据链路、CSV 导出字段；teach_batch_tab.py 体量最大，需拆分说明批量任务编排与进度反馈。"
+    - text: "模块 teaching_workflow「示教与配方流程」：recipe.py、quick_teach_dialog.py、learn_dialog.py。必须沉淀配方 JSON 的字段语义与版本兼容策略、示教采集步骤、参数复用到各页面的规则。"
+    - text: "模块 ui_components_and_dialogs「UI 组件、样式与对话框」：ui_components.py、ui_dialogs.py、help_dialogs.py、styles.py。沉淀 create_* 工厂只创建不入布局、QGroupBox 尺寸策略、QSS 设计 token 命名与 HiDPI 适配、文件/帮助对话框复用方式。"
+    - text: "模块 recipes_and_docs「配方样本与工程资产」：recipes/、docs/、README.md、说明书.md、CHANGELOG.md、main.spec、AurascopeV6.spec、version_info.txt、logo.*。说明已标定示教样本对应的工艺场景，以及打包/发版所需文件清单与相互关系。"
+    - text: "模块 tests「测试」：仓库根目录 test_*.py。逐文件说明覆盖的模块、是否依赖 QApplication/offscreen 平台，并列出未覆盖区域（main_window 增强检测、teach_batch_tab 批量逻辑、画布交互），不要虚构测试框架之外的配置。"
+    - text: "禁止为备份文件、临时目录、venv/build/dist 生成知识卡；不要新增与上述九个模块范围重叠的模块，如需拆分请在卡片内以子章节表达。"

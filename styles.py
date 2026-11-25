@@ -82,6 +82,67 @@ QTabBar::tab:selected {{
 }}
 QTabBar::tab:disabled {{ color: {c['text3']}; }}
 
+/* ══════════════════════════ 顶部菜单栏（系统细条） ══════════════════════════ */
+QMenuBar {{
+    background: {c['surface2']};
+    border-bottom: 1px solid {c['border']};
+    padding: 0 8px;
+    min-height: 28px;
+}}
+QMenuBar::item {{
+    background: transparent; color: {c['text2']};
+    padding: 6px 10px; border-radius: 4px; font-size: 12px;
+}}
+QMenuBar::item:selected {{ background: {c['accent_tint']}; color: {c['accent']}; }}
+QMenuBar::item:pressed {{ background: {c['accent_tint2']}; color: {c['accent']}; }}
+
+/* ══════════════════════════ 自绘标题栏（替代系统标题栏） ══════════════════════════ */
+QFrame#TitleBar {{
+    background: {c['surface2']};
+    border-bottom: 1px solid {c['border']};
+}}
+QLabel#TitleBarName {{ font-size: 14px; font-weight: 700; color: {c['text']}; }}
+QPushButton#MenuButton {{
+    background: transparent; color: {c['text2']};
+    border: none; border-radius: 6px;
+    padding: 5px 10px; font-size: 14px;
+}}
+QPushButton#MenuButton:hover {{ background: {c['accent_tint']}; color: {c['accent']}; }}
+QPushButton#MenuButton:pressed {{ background: {c['accent_tint2']}; }}
+QPushButton#MenuButton::menu-indicator {{ image: none; width: 0; }}
+QPushButton#WinBtn {{ background: transparent; border: none; border-radius: 0; }}
+QPushButton#WinBtn:hover {{ background: {c['border']}; }}
+QPushButton#WinBtn:pressed {{ background: {c['border2']}; }}
+QPushButton#WinBtnClose {{ background: transparent; border: none; border-radius: 0; }}
+QPushButton#WinBtnClose:hover {{ background: {c['danger']}; }}
+QPushButton#WinBtnClose:pressed {{ background: #B91C1C; }}
+
+/* ══════════════════════════ 应用页头（品牌 + 模块导航） ══════════════════════════ */
+QFrame#AppHeader {{
+    background: {c['surface']};
+    border-bottom: 1px solid {c['border']};
+}}
+QLabel#AppName {{
+    font-size: 16px; font-weight: 700; color: {c['text']};
+}}
+QLabel#AppVersion {{
+    font-size: 11px; color: {c['text3']}; padding-top: 2px;
+}}
+QPushButton#ModuleTab {{
+    background: transparent; color: {c['text2']};
+    border: none; border-bottom: 2px solid transparent;
+    padding: 0 12px; min-height: 54px;
+    font-size: 14px; font-weight: 600;
+}}
+QPushButton#ModuleTab:hover {{
+    background: {c['accent_tint']}; color: {c['accent']};
+}}
+QPushButton#ModuleTab:pressed {{ background: {c['accent_tint2']}; }}
+QPushButton#ModuleTab:checked {{
+    color: {c['accent']}; border-bottom: 2px solid {c['accent']};
+}}
+QPushButton#ModuleTab:focus {{ outline: none; }}
+
 /* ══════════════════════════ 卡片 / 面板 ══════════════════════════ */
 QFrame#SidebarCard {{
     background: {c['surface']};
@@ -145,6 +206,15 @@ QLabel#ErrorValue {{
 QLabel#ImagePreview {{
     background: {c['surface']}; border: 1px solid {c['border']};
     border-radius: 8px; padding: 4px;
+}}
+/* 底部轻提示 */
+QLabel#Toast {{
+    background: rgba(27, 35, 51, 0.92); color: #FFFFFF;
+    border-radius: 8px; padding: 8px 14px; font-size: 12px;
+}}
+/* 空表格引导 */
+QLabel#TableEmptyHint {{
+    color: {c['text3']}; font-size: 12px; background: transparent;
 }}
 QLabel#AreaValue, QLabel#CountResult {{
     font-family: {c['mono']}; font-size: 21px; font-weight: 700; color: {c['accent_a']};

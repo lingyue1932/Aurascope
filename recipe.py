@@ -50,16 +50,43 @@ _BOOL_KEYS = ('enhanced', 'clahe_enabled', 'morph_enabled', 'edge_verify')
 _FLOAT_KEYS = ('clahe_clip_limit', 'min_roundness', 'edge_thresh')
 
 
+_ROOT_CACHE = None
+
+
+def _writable(path):
+    """目录可写探测（Program Files/只读共享目录回退用）。"""
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, '.write_test')
+        with open(probe, 'w', encoding='utf-8'):
+            pass
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
 def _recipe_root():
-    """配方存储根目录（可用环境变量覆盖，测试用）"""
+    """配方存储根目录：exe 同级优先；不可写时回退到当前用户数据目录。"""
+    global _ROOT_CACHE
     env = os.environ.get('AURASCOPE_RECIPE_DIR')
     if env:
         return os.path.abspath(env)
+    if _ROOT_CACHE is not None:
+        return _ROOT_CACHE
     if getattr(sys, 'frozen', False):
         base = os.path.dirname(sys.executable)
     else:
         base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, 'recipes')
+    preferred = os.path.join(base, 'recipes')
+    if _writable(preferred):
+        _ROOT_CACHE = preferred
+    else:
+        from app_paths import local_data_dir
+        fallback = os.path.join(local_data_dir(), 'recipes')
+        os.makedirs(fallback, exist_ok=True)
+        _ROOT_CACHE = fallback
+    return _ROOT_CACHE
 
 
 def recipe_dir():

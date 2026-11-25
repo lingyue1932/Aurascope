@@ -1,27 +1,32 @@
 """主窗口类"""
 
 import copy
+import logging
 import os
+import sys
 
 import cv2
 import numpy as np
-import pandas as pd
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QFileDialog, QTableWidget, QTableWidgetItem,
                              QHeaderView, QDialog, QInputDialog, QFrame,
                              QMessageBox, QScrollArea, QSizePolicy,
-                             QLabel, QSlider,
+                             QLabel, QSlider, QPushButton, QButtonGroup,
                              QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter,
-                             QComboBox)
-from PyQt6.QtCore import Qt, QSettings, QTimer, QUrl
-from PyQt6.QtGui import (QDesktopServices, QIcon, QImage, QKeySequence,
-                         QPixmap, QShortcut)
+                             QComboBox, QMenu)
+from PyQt6.QtCore import QEvent, QPoint, Qt, QSettings, QTimer, QUrl
+from PyQt6.QtGui import (QDesktopServices, QIcon, QImage,
+                         QKeySequence, QPixmap, QShortcut)
 from PyQt6.QtWidgets import QApplication
 
+from app_paths import resource_path
+from csv_export import write_csv
 from styles import STYLESHEET, DIALOG_STYLESHEET
 from app_version import APP_VERSION
+from help_dialogs import AboutDialog, MarkdownDialog
+from ui_dialogs import show_info, show_toast, show_warning
 from update_check import UpdateChecker, should_show_update
 from canvas import ImageCanvas
 from image import (extract_threshold_contour, contour_to_polygon,
@@ -29,11 +34,12 @@ from image import (extract_threshold_contour, contour_to_polygon,
                               is_void_in_roi,calculate_roundness, detect_voids_local,create_local_region_around_void,
                               otsu_threshold)
 
-from ui_components import (create_primary_button, create_secondary_button,
-                           create_success_button, create_danger_button,
-                           create_step_title, create_info_label, create_success_label,
-                           create_slider_with_label, create_checkbox, create_groupbox,
-                           CollapsibleSection)
+from ui_components import (align_right, create_primary_button,
+                           create_secondary_button, create_success_button,
+                           create_danger_button, create_step_title,
+                           create_info_label, create_success_label,
+                           create_slider_with_label, create_checkbox,
+                           create_groupbox, CollapsibleSection, TitleBar)
 # 距离测量已并入 ROI Tab，原独立 Tab 暂停挂载。
 # from measure_tab import MeasureTab
 from shear_tab import ShearTab
@@ -50,14 +56,15 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Aurascope V{APP_VERSION.rsplit('.', 1)[0]}   by: LINGYUE")
+        self._manual_check = False
+        self.setWindowTitle(f"Aurascope {APP_VERSION}")
+        # 去掉系统标题栏：标题、菜单、最小化/最大化/关闭统一由自绘 TitleBar 承担
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.resize(1000, 600)
-        
-        # 设置窗口图标
-        try:
-            self.setWindowIcon(QIcon(r"logo_1.ico"))
-        except:
-            pass
+        self.setAcceptDrops(True)
+
+        # 设置窗口图标（兼容 PyInstaller 单文件解包目录）
+        self.setWindowIcon(QIcon(resource_path('logo_1.ico')))
 
         # 核心数据
         self.pixel_scale = 0
@@ -79,6 +86,7 @@ class MainWindow(QMainWindow):
 
         self.update_checker = UpdateChecker(self)
         self.update_checker.update_found.connect(self._on_update_found)
+        self.update_checker.check_finished.connect(self._on_check_finished)
         if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
             QTimer.singleShot(1500, self.update_checker.check)
 
@@ -86,14 +94,21 @@ class MainWindow(QMainWindow):
         from ui_components import style_combo_popups
         style_combo_popups(self)
 
+        self._restore_window_state()
+
     def init_ui(self):
         """初始化UI"""
         self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
+        central = QWidget()
+        self._root_layout = QVBoxLayout(central)
+        self._root_layout.setContentsMargins(0, 0, 0, 0)
+        self._root_layout.setSpacing(0)
+        self._root_layout.addWidget(self.tab_widget)
+        self.setCentralWidget(central)
 
         # Tab 1: ROI（缺陷面积，默认首页）
         self.area_tab = DefectAreaTab()
-        self.tab_widget.addTab(self.area_tab, '    ROI    ')
+        self.tab_widget.addTab(self.area_tab, 'ROI')
 
         # Tab 2: 空洞分析
         self.analysis_tab = analysis_tab = QWidget()
@@ -101,10 +116,11 @@ class MainWindow(QMainWindow):
         analysis_layout.setContentsMargins(16, 16, 16, 16)
         analysis_layout.setSpacing(0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.analysis_splitter = splitter = QSplitter(Qt.Orientation.Horizontal)
         sidebar = self._create_sidebar()
         splitter.addWidget(sidebar)
         self.canvas = ImageCanvas()
+        self.canvas.empty_import.connect(self.load_image)
         splitter.addWidget(self.canvas)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -113,23 +129,29 @@ class MainWindow(QMainWindow):
 
         self._connect_signals()
 
-        self.tab_widget.addTab(analysis_tab, "    空洞分析    ")
+        self.tab_widget.addTab(analysis_tab, "空洞分析")
 
         # Tab 3: 示教与批量检测
         self.teach_batch_tab = TeachBatchTab()
-        self.tab_widget.addTab(self.teach_batch_tab, "    示教/批量    ")
+        self.tab_widget.addTab(self.teach_batch_tab, "示教/批量")
 
         # Tab 4: 剪切力计算
         self.shear_tab = ShearTab()
-        self.tab_widget.addTab(self.shear_tab, "    剪切力计算    ")
+        self.tab_widget.addTab(self.shear_tab, "剪切力计算")
 
         # Tab 5: 物料计数
         self.counting_tab = CountingTab()
-        self.tab_widget.addTab(self.counting_tab, "    物料计数    ")
+        self.tab_widget.addTab(self.counting_tab, "物料计数")
 
         # Tab 6: 图像拼接
         self.stitching_tab = StitchingTab()
-        self.tab_widget.addTab(self.stitching_tab, "    图像拼接    ")
+        self.tab_widget.addTab(self.stitching_tab, "图像拼接")
+
+        self.title_bar = self._build_title_bar()
+        self._root_layout.insertWidget(0, self.title_bar)
+        self._build_menu()
+        self.tab_widget.tabBar().hide()
+        self._root_layout.insertWidget(1, self._build_app_header())
 
         # 初始禁用状态
         self.toggle_steps(False)
@@ -160,8 +182,271 @@ class MainWindow(QMainWindow):
         self.selected_void_for_local = None  # 当前选中用于局部调节的空洞ID
         self.local_brush_mode = False
         self.brush_radius = 60
-        
 
+    # ========== 标题栏 / 应用页头 / 菜单 ==========
+    def _build_title_bar(self):
+        """自绘标题栏：品牌 + 文件/帮助 + 最小化/最大化/关闭。"""
+        return TitleBar(self, 'Aurascope', f'v{APP_VERSION}',
+                        QPixmap(resource_path('logo.png')))
+
+    def _build_app_header(self):
+        """模块导航条：与标题栏形成「窗口 chrome → 功能模块」两层。"""
+        header = QFrame()
+        header.setObjectName('AppHeader')
+        header.setFixedHeight(56)
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setSpacing(8)
+
+        self.module_group = QButtonGroup(self)
+        self.module_group.setExclusive(True)
+        self.module_buttons = []
+        for index in range(self.tab_widget.count()):
+            button = QPushButton(self.tab_widget.tabText(index).strip())
+            button.setObjectName('ModuleTab')
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(button.text())
+            button.clicked.connect(
+                lambda _=False, i=index: self.tab_widget.setCurrentIndex(i))
+            self.module_group.addButton(button, index)
+            self.module_buttons.append(button)
+            layout.addWidget(button)
+        layout.addStretch()
+        self.tab_widget.currentChanged.connect(self._sync_module_tabs)
+        self._sync_module_tabs(self.tab_widget.currentIndex())
+        return header
+
+    def _sync_module_tabs(self, index):
+        for i, button in enumerate(getattr(self, 'module_buttons', [])):
+            button.setChecked(i == index)
+
+    # ========== 菜单 / 最近打开 ==========
+    def _build_menu(self):
+        """菜单挂在自绘标题栏上，不再占用系统菜单栏。"""
+        file_menu = QMenu(self)
+        file_menu.addAction('打开图片…', self.open_image_in_roi)
+        self.recent_menu = file_menu.addMenu('最近打开')
+        file_menu.addSeparator()
+        file_menu.addAction('退出', self.close)
+
+        help_menu = QMenu(self)
+        help_menu.addAction('使用说明', lambda: self._show_doc('使用说明', '说明书.md'))
+        help_menu.addAction('更新日志', lambda: self._show_doc('更新日志', 'CHANGELOG.md'))
+        help_menu.addSeparator()
+        help_menu.addAction('检查更新…', self.check_updates_manual)
+        help_menu.addAction('关于 Aurascope', self._show_about)
+
+        self.title_bar.add_menu('文件', file_menu)
+        self.title_bar.add_menu('帮助', help_menu)
+        self._rebuild_recent_menu()
+
+    def _show_doc(self, title, filename):
+        MarkdownDialog(title, filename, self).exec()
+
+    def _show_about(self):
+        AboutDialog(self).exec()
+
+    # ========== 无边框窗口：边缘缩放 / 最大化状态同步 ==========
+    def changeEvent(self, event):
+        if (event.type() == QEvent.Type.WindowStateChange
+                and getattr(self, 'title_bar', None) is not None):
+            self.title_bar.set_maximized(self.isMaximized())
+        super().changeEvent(event)
+
+    def nativeEvent(self, event_type, message):
+        """无边框窗口的八向缩放：把四周 6px 交给系统 WM_NCHITTEST。
+
+        注意：这里绝不能 `return super().nativeEvent(...)`——
+        PyQt6 下基类返回的 sip.voidptr 会被重复处理，直接 access violation（已踩过）。
+        """
+        if (sys.platform == 'win32' and not self.isMaximized()
+                and event_type == b'windows_generic_MSG'):
+            import ctypes
+            import ctypes.wintypes
+            try:
+                msg = ctypes.wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0084:
+                    hit = self._hit_test(msg.lParam)
+                    if hit is not None:
+                        return True, hit
+            except Exception:
+                logging.getLogger('Aurascope').debug(
+                    'WM_NCHITTEST 处理失败', exc_info=True)
+        return False, 0
+
+    def _hit_test(self, lparam):
+        """WM_NCHITTEST 坐标是物理像素，转回窗口内逻辑坐标再判边界。"""
+        import ctypes
+        x = ctypes.c_short(lparam & 0xFFFF).value
+        y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+        screen = self.screen()
+        ratio = screen.devicePixelRatio() if screen is not None else 1.0
+        pos = self.mapFromGlobal(QPoint(int(round(x / ratio)),
+                                        int(round(y / ratio))))
+        border = 6
+        left = pos.x() < border
+        right = pos.x() >= self.width() - border
+        top = pos.y() < border
+        bottom = pos.y() >= self.height() - border
+        if top and left:
+            return 13   # HTTOPLEFT
+        if top and right:
+            return 14   # HTTOPRIGHT
+        if bottom and left:
+            return 16   # HTBOTTOMLEFT
+        if bottom and right:
+            return 17   # HTBOTTOMRIGHT
+        if left:
+            return 10   # HTLEFT
+        if right:
+            return 11   # HTRIGHT
+        if top:
+            return 12   # HTTOP
+        if bottom:
+            return 15   # HTBOTTOM
+        return None
+
+    def open_image_in_roi(self):
+        self.tab_widget.setCurrentWidget(self.area_tab)
+        self.area_tab.load_image()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """拖入图片 → ROI；多张图片 → 拼接；文件夹 → 批次检测。"""
+        urls = [url.toLocalFile() for url in event.mimeData().urls()
+                if url.isLocalFile()]
+        if not urls:
+            return
+        exts = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
+        folders = [path for path in urls if os.path.isdir(path)]
+        images = [path for path in urls
+                  if os.path.isfile(path) and path.lower().endswith(exts)]
+        if folders:
+            folder = folders[0]
+            self.tab_widget.setCurrentWidget(self.teach_batch_tab)
+            if self.teach_batch_tab.load_folder(folder):
+                show_toast(self, f'已载入批次：{os.path.basename(os.path.normpath(folder))}')
+            event.acceptProposedAction()
+            return
+        if not images:
+            show_warning(self, '无法导入', '请拖入图片文件（PNG/JPG/BMP/TIF）或批次文件夹。')
+            return
+        if len(images) == 1:
+            self.tab_widget.setCurrentWidget(self.area_tab)
+            self.area_tab.load_image(images[0])
+        else:
+            self.tab_widget.setCurrentWidget(self.stitching_tab)
+            self.stitching_tab.add_images(images)
+        event.acceptProposedAction()
+
+    @staticmethod
+    def _recent_list(settings, key):
+        raw = settings.value(key, [])
+        if isinstance(raw, str):
+            return [raw] if raw else []
+        return [str(value) for value in (raw or [])]
+
+    def _push_recent(self, key, value, limit):
+        if os.environ.get('QT_QPA_PLATFORM') == 'offscreen':
+            return
+        value = os.path.abspath(value)
+        settings = QSettings('Aurascope', 'Aurascope')
+        items = [item for item in self._recent_list(settings, key)
+                 if os.path.normcase(item) != os.path.normcase(value)]
+        items.insert(0, value)
+        settings.setValue(key, items[:limit])
+        self._rebuild_recent_menu()
+
+    def remember_recent_image(self, path):
+        self._push_recent('recent/images', path, 8)
+
+    def remember_recent_batch(self, folder):
+        self._push_recent('recent/batches', folder, 5)
+
+    def _rebuild_recent_menu(self):
+        menu = getattr(self, 'recent_menu', None)
+        if menu is None:
+            return
+        menu.clear()
+        settings = QSettings('Aurascope', 'Aurascope')
+        images = self._recent_list(settings, 'recent/images')
+        batches = self._recent_list(settings, 'recent/batches')
+        if not images and not batches:
+            action = menu.addAction('（暂无）')
+            action.setEnabled(False)
+            return
+        for path in images:
+            action = menu.addAction(os.path.basename(path))
+            action.setToolTip(path)
+            action.triggered.connect(
+                lambda _=False, p=path: self._open_recent_image(p))
+        if images and batches:
+            menu.addSeparator()
+        for folder in batches:
+            action = menu.addAction(
+                f'批次：{os.path.basename(os.path.normpath(folder))}')
+            action.setToolTip(folder)
+            action.triggered.connect(
+                lambda _=False, p=folder: self._open_recent_batch(p))
+
+    def _open_recent_image(self, path):
+        if not os.path.isfile(path):
+            show_warning(self, '打开失败', f'文件不存在：\n{path}')
+            return
+        self.tab_widget.setCurrentWidget(self.area_tab)
+        if not self.area_tab.load_image(path):
+            show_warning(self, '打开失败', f'无法打开图片：\n{path}')
+
+    def _open_recent_batch(self, folder):
+        self.tab_widget.setCurrentWidget(self.teach_batch_tab)
+        if not self.teach_batch_tab.load_folder(folder):
+            show_warning(self, '打开失败', f'批次文件夹不可用：\n{folder}')
+
+    # ========== 窗口状态 ==========
+    def _splitter_map(self):
+        return {
+            'analysis': getattr(self, 'analysis_splitter', None),
+            'area': getattr(self.area_tab, 'splitter', None),
+            'teach_h': getattr(self.teach_batch_tab, 'hsplit', None),
+            'teach_v': getattr(self.teach_batch_tab, 'vsplit', None),
+        }
+
+    def _restore_window_state(self):
+        settings = QSettings('Aurascope', 'Aurascope')
+        geometry = settings.value('ui/geometry')
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        window_state = settings.value('ui/window_state')
+        if window_state is not None:
+            self.restoreState(window_state)
+        try:
+            index = int(settings.value('ui/tab', 0))
+        except (TypeError, ValueError):
+            index = 0
+        if 0 <= index < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(index)
+        for name, widget in self._splitter_map().items():
+            if widget is None:
+                continue
+            data = settings.value(f'ui/splitter/{name}')
+            if data is not None:
+                widget.restoreState(data)
+
+    def closeEvent(self, event):
+        if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':
+            settings = QSettings('Aurascope', 'Aurascope')
+            settings.setValue('ui/geometry', self.saveGeometry())
+            settings.setValue('ui/window_state', self.saveState())
+            settings.setValue('ui/tab', self.tab_widget.currentIndex())
+            for name, widget in self._splitter_map().items():
+                if widget is not None:
+                    settings.setValue(f'ui/splitter/{name}', widget.saveState())
+            logging.getLogger('Aurascope').info('窗口状态已保存')
+        super().closeEvent(event)
 
     def _create_sidebar(self):
         """创建侧边栏"""
@@ -256,7 +541,7 @@ class MainWindow(QMainWindow):
 
         # 区域阈值标题行 + 自动 Otsu
         layer_header = QHBoxLayout()
-        layer_header.addWidget(QLabel("区域阈值:"))
+        layer_header.addWidget(QLabel("区域阈值："))
         layer_header.addStretch()
         btn_layer_otsu = create_secondary_button("自动 (Otsu)", self.auto_layer_otsu)
         btn_layer_otsu.setToolTip("对当前矩形框选区域自动计算识别阈值")
@@ -288,11 +573,11 @@ class MainWindow(QMainWindow):
 
         # 高级选项
         adv = CollapsibleSection("多边形编辑")
-        self.lbl_vertex_val = create_info_label("Vertices: 24")
+        self.lbl_vertex_val = create_info_label("顶点数：24")
         self.lbl_vertex_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.slider_vertices, _ = create_slider_with_label(
             3, 120, 24, self.on_vertex_count_changed)
-        self.chk_snap_edge = create_checkbox("Snap to edge", False, self.toggle_snap_edges)
+        self.chk_snap_edge = create_checkbox("吸附边缘", False, self.toggle_snap_edges)
         self.lbl_edit_tip = create_info_label("双击边新增顶点 · Delete 删除选中")
         self.chk_roi_overlay = create_checkbox("选区绿色蒙版", True, self.toggle_roi_overlay)
 
@@ -311,7 +596,7 @@ class MainWindow(QMainWindow):
 
         # 阈值
         thresh_header = QHBoxLayout()
-        thresh_header.addWidget(QLabel("识别阈值:"))
+        thresh_header.addWidget(QLabel("识别阈值："))
         thresh_header.addStretch()
         btn_otsu = create_secondary_button("自动 (Otsu)")
         btn_otsu.clicked.connect(self.auto_otsu_threshold)
@@ -333,7 +618,7 @@ class MainWindow(QMainWindow):
 
         # 面积过滤
         area_row = QHBoxLayout()
-        area_row.addWidget(QLabel("面积过滤:"))
+        area_row.addWidget(QLabel("面积过滤："))
         self.spin_min_area = QSpinBox()
         self.spin_min_area.setRange(0, 100000)
         self.spin_min_area.setValue(1)
@@ -370,7 +655,7 @@ class MainWindow(QMainWindow):
         adv = CollapsibleSection("高级设置")
 
         erosion_row = QHBoxLayout()
-        erosion_row.addWidget(QLabel("边界腐蚀 (px):"))
+        erosion_row.addWidget(QLabel("边界腐蚀（px）："))
         self.spin_erosion = QSpinBox()
         self.spin_erosion.setRange(0, 20)
         self.spin_erosion.setValue(self.roi_erosion_px)
@@ -390,7 +675,7 @@ class MainWindow(QMainWindow):
         self.chk_clahe = create_checkbox("CLAHE 对比度增强", True, self.calculate_voids)
         ew.addWidget(self.chk_clahe)
         clip_row = QHBoxLayout()
-        clip_row.addWidget(QLabel("对比度:"))
+        clip_row.addWidget(QLabel("对比度："))
         self.slider_clahe_clip = QSlider(Qt.Orientation.Horizontal)
         self.slider_clahe_clip.setRange(10, 40)
         self.slider_clahe_clip.setValue(20)
@@ -406,7 +691,7 @@ class MainWindow(QMainWindow):
         ew.addWidget(self.chk_morph)
 
         round_row = QHBoxLayout()
-        round_row.addWidget(QLabel("圆度过滤:"))
+        round_row.addWidget(QLabel("圆度过滤："))
         self.spin_roundness = QDoubleSpinBox()
         self.spin_roundness.setRange(0.0, 1.0)
         self.spin_roundness.setSingleStep(0.05)
@@ -458,9 +743,22 @@ class MainWindow(QMainWindow):
         return settings.value('update/skipped_version', '', str)
 
     def _on_update_found(self, info):
-        if not should_show_update(info, self._skipped_update_version()):
+        if not self._manual_check and not should_show_update(
+                info, self._skipped_update_version()):
             return
         self._show_update_dialog(info)
+
+    def check_updates_manual(self):
+        """帮助菜单的主动检查：失败/已最新也给出反馈。"""
+        self._manual_check = True
+        self.update_checker.check(manual=True)
+
+    def _on_check_finished(self, info, error):
+        self._manual_check = False
+        if error:
+            show_warning(self, '检查更新', f'检查更新失败：{error}')
+        elif info is None:
+            show_info(self, '检查更新', '当前已是最新版本。')
 
     def _show_update_dialog(self, info):
         notes = (info.get('notes') or '').strip()
@@ -472,7 +770,10 @@ class MainWindow(QMainWindow):
         box.setText(detail)
         go = box.addButton('前往下载', QMessageBox.ButtonRole.AcceptRole)
         skip = box.addButton('忽略本次更新', QMessageBox.ButtonRole.ActionRole)
-        box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
+        later = box.addButton('稍后', QMessageBox.ButtonRole.RejectRole)
+        go.setObjectName('PrimaryBtn')
+        skip.setObjectName('SecondaryBtn')
+        later.setObjectName('SecondaryBtn')
         box.exec()
         clicked = box.clickedButton()
         if clicked is go and info.get('url'):
@@ -500,7 +801,8 @@ class MainWindow(QMainWindow):
         
         img = self._read_image(path)
         if img is None:
-            QMessageBox.warning(self, "错误", "图片加载失败！请检查文件格式/路径")
+            logging.getLogger('Aurascope').warning('图片加载失败：%s', path)
+            show_warning(self, "错误", "图片加载失败！请检查文件格式/路径")
             return
 
         self.canvas.set_image(img)
@@ -520,6 +822,8 @@ class MainWindow(QMainWindow):
         self.btn_calib.setChecked(False)
         self.btn_poly.setChecked(False)
         self.btn_rect.setChecked(False)
+        self.remember_recent_image(path)
+        logging.getLogger('Aurascope').info('空洞分析加载图片：%s', path)
 
     def _read_image(self, path):
         """读取图像文件（支持TIF）"""
@@ -630,7 +934,7 @@ class MainWindow(QMainWindow):
         
         dist_px = np.sqrt((p1.x() - p2.x())**2 + (p1.y() - p2.y())**2)
         if dist_px < 5:
-            QMessageBox.warning(self, "错误", "标定线太短，请重试")
+            show_warning(self, "错误", "标定线太短，请重试")
             return
 
         dialog = QInputDialog(self)
@@ -649,7 +953,7 @@ class MainWindow(QMainWindow):
             real_len = dialog.doubleValue()
             if real_len > 0:
                 self.pixel_scale = dist_px / real_len
-                self.lbl_scale_info.setText(f"标定成功: 1 μm = {self.pixel_scale:.2f} px")
+                self.lbl_scale_info.setText(f"标定成功：1 μm = {self.pixel_scale:.2f} px")
                 self.canvas.calib_line = (p1, p2, f"{real_len} μm")
                 self.canvas.update()
                 self.btn_poly.setEnabled(True)
@@ -744,14 +1048,14 @@ class MainWindow(QMainWindow):
             self.canvas.img_cv, self.canvas.current_rect, val)
         
         if contour is None:
-            QMessageBox.warning(self, '提示', '未检测到有效边界，请调整阈值或重新框选。')
+            show_warning(self, '提示', '未检测到有效边界，请调整阈值或重新框选。')
             return
 
         target_vertices = self.slider_vertices.value()
         polygon = contour_to_polygon(contour, target_vertices)
         
         if len(polygon) < 3:
-            QMessageBox.warning(self, '提示', '边界多边形生成失败。')
+            show_warning(self, '提示', '边界多边形生成失败。')
             return
 
         self._apply_polygon_roi(polygon, rect_info, local_mask, layer_thresh=val)
@@ -788,7 +1092,7 @@ class MainWindow(QMainWindow):
     def start_auto_roi(self):
         """进入一键自动 ROI 的框选状态"""
         if self.canvas.img_cv is None:
-            QMessageBox.information(self, '提示', '请先上传图片')
+            show_info(self, '提示', '请先上传图片')
             return
         self.auto_roi_pending = True
         self.lbl_auto_roi_tip.setVisible(True)
@@ -798,7 +1102,7 @@ class MainWindow(QMainWindow):
         """对矩形框选区域自动计算识别阈值"""
         rect = getattr(self.canvas, 'current_rect', None)
         if not rect:
-            QMessageBox.information(self, '提示', '请先用「矩形框+阈值」在图上框选一个区域')
+            show_info(self, '提示', '请先用「矩形框+阈值」在图上框选一个区域')
             return
         if self.canvas.img_cv is None:
             return
@@ -827,7 +1131,7 @@ class MainWindow(QMainWindow):
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(iw, x + w), min(ih, y + h)
         if x2 - x1 < 5 or y2 - y1 < 5:
-            QMessageBox.warning(self, '提示', '框选区域过小，请重新框选')
+            show_warning(self, '提示', '框选区域过小，请重新框选')
             return
 
         if len(self.canvas.img_cv.shape) == 2:
@@ -860,7 +1164,7 @@ class MainWindow(QMainWindow):
 
     def _auto_roi_fallback(self, rect_tuple, msg):
         """自动识别失败时退回手动阈值模式（保留框选，用户自行调阈值）"""
-        QMessageBox.warning(self, '提示', msg)
+        show_warning(self, '提示', msg)
         self.prepare_layer_threshold(rect_tuple)
 
     def on_polygon_edited(self, points):
@@ -913,9 +1217,9 @@ class MainWindow(QMainWindow):
         
         if self.pixel_scale > 0:
             area_um = self.solder_area_px / (self.pixel_scale ** 2)
-            self.lbl_layer_info.setText(f"焊层面积: {area_um:.0f} μm²")
+            self.lbl_layer_info.setText(f"焊层面积：{area_um:.0f} μm²")
         else:
-            self.lbl_layer_info.setText(f"焊层面积: {self.solder_area_px} 像素（未标定）")
+            self.lbl_layer_info.setText(f"焊层面积：{self.solder_area_px} 像素（未标定）")
         
         self.grp_void.setEnabled(True)
         self.auto_otsu_threshold()
@@ -992,18 +1296,18 @@ class MainWindow(QMainWindow):
         if self.pixel_scale > 0:
             total_area_um = total_void_px / (self.pixel_scale ** 2)
             self.result_box.setText(
-                f"空洞数量: {len(self.voids_data)}\n"
-                f"空洞总面积: {total_area_um:.2f} μm²\n"
-                f"空洞率: {rate:.2f}%"
+                f"空洞数量：{len(self.voids_data)}\n"
+                f"空洞总面积：{total_area_um:.2f} μm²\n"
+                f"空洞率：{rate:.2f}%"
             )
         else:
             self.result_box.setText(
-                f"空洞数量: {len(self.voids_data)}\n"
-                f"空洞总面积: {total_void_px} 像素（未标定）\n"
-                f"空洞率: {rate:.2f}%"
+                f"空洞数量：{len(self.voids_data)}\n"
+                f"空洞总面积：{total_void_px} 像素（未标定）\n"
+                f"空洞率：{rate:.2f}%"
             )
 
-        self.canvas.void_rate_text = f"空洞率: {rate:.2f}%"
+        self.canvas.void_rate_text = f"空洞率：{rate:.2f}%"
 
     def on_enhanced_toggled(self):
         """增强检测开关切换"""
@@ -1014,7 +1318,7 @@ class MainWindow(QMainWindow):
     def auto_otsu_threshold(self):
         """用 Otsu 算法自动计算阈值"""
         if self.roi_mask is None:
-            QMessageBox.warning(self, '提示', '请先定义焊层 ROI')
+            show_warning(self, '提示', '请先定义焊层 ROI')
             return
         if len(self.canvas.img_cv.shape) == 2:
             gray = self.canvas.img_cv
@@ -1084,7 +1388,7 @@ class MainWindow(QMainWindow):
     def on_undo(self):
         """撤销到上一个状态"""
         if not self.undo_stack:
-            QMessageBox.information(self, '提示', '没有更多可撤销的操作')
+            show_info(self, '提示', '没有更多可撤销的操作')
             return
         self.voids_data = self.undo_stack.pop()
         self._refresh_void_metrics()
@@ -1352,31 +1656,31 @@ class MainWindow(QMainWindow):
         if self.pixel_scale > 0:
             total_area_um = total_void_px / (self.pixel_scale ** 2)
             self.result_box.setText(
-                f"空洞数量: {len(self.voids_data)}\n"
-                f"空洞总面积: {total_area_um:.2f} μm²\n"
-                f"空洞率: {rate:.2f}%"
+                f"空洞数量：{len(self.voids_data)}\n"
+                f"空洞总面积：{total_area_um:.2f} μm²\n"
+                f"空洞率：{rate:.2f}%"
             )
         else:
             self.result_box.setText(
-                f"空洞数量: {len(self.voids_data)}\n"
-                f"空洞总面积: {total_void_px:.0f} 像素\n"
-                f"空洞率: {rate:.2f}%"
+                f"空洞数量：{len(self.voids_data)}\n"
+                f"空洞总面积：{total_void_px:.0f} 像素\n"
+                f"空洞率：{rate:.2f}%"
             )
 
-        self.canvas.void_rate_text = f"空洞率: {rate:.2f}%"
+        self.canvas.void_rate_text = f"空洞率：{rate:.2f}%"
 
     # ========== 截图 ==========
     def save_screenshot(self):
         """一键截图复制到剪贴板"""
         pixmap = self.canvas.grab()
         QApplication.clipboard().setPixmap(pixmap)
-        QMessageBox.information(self, "成功", "截图已复制到剪贴板")
+        show_toast(self, "截图已复制到剪贴板")
 
     # ========== 数据导出 ==========
     def show_detail_table(self):
         """显示详细数据表格"""
         if not self.voids_data:
-            QMessageBox.information(self, "提示", "暂无空洞数据")
+            show_info(self, "提示", "暂无空洞数据")
             return
             
         dlg = QDialog(self)
@@ -1396,6 +1700,9 @@ class MainWindow(QMainWindow):
         table.setHorizontalHeaderLabels(columns)
         table.setRowCount(len(self.voids_data))
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         
         scale = self.pixel_scale if self.pixel_scale > 0 else 1.0
         
@@ -1407,11 +1714,14 @@ class MainWindow(QMainWindow):
             min_l = min(w_um, h_um)
             roundness = calculate_roundness(v['points'], v['area_px'])
             
-            table.setItem(row, 0, QTableWidgetItem(str(v['id'])))
-            table.setItem(row, 1, QTableWidgetItem(f"{area_um:.2f}"))
-            table.setItem(row, 2, QTableWidgetItem(f"{max_l:.2f}"))
-            table.setItem(row, 3, QTableWidgetItem(f"{min_l:.2f}"))
-            table.setItem(row, 4, QTableWidgetItem(f"{roundness:.3f}"))
+            id_item = QTableWidgetItem(str(v['id']))
+            id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter |
+                                     Qt.AlignmentFlag.AlignVCenter)
+            table.setItem(row, 0, id_item)
+            table.setItem(row, 1, align_right(QTableWidgetItem(f"{area_um:.2f}")))
+            table.setItem(row, 2, align_right(QTableWidgetItem(f"{max_l:.2f}")))
+            table.setItem(row, 3, align_right(QTableWidgetItem(f"{min_l:.2f}")))
+            table.setItem(row, 4, align_right(QTableWidgetItem(f"{roundness:.3f}")))
             
         layout.addWidget(table)
         dlg.exec()
@@ -1444,9 +1754,8 @@ class MainWindow(QMainWindow):
                 "Center_Y": int(v['cy'])
             })
         
-        df = pd.DataFrame(data_export)
-        df.to_csv(path, index=False, encoding='utf-8-sig')
-        QMessageBox.information(parent_dlg, "成功", "文件导出成功！")
+        write_csv(path, data_export)
+        show_toast(parent_dlg, "文件导出成功")
 
 
 # ====================== 局部阈值支持函数 ======================

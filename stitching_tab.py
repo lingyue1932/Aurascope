@@ -13,11 +13,13 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
                              QAbstractItemView, QSplitter)
 from PyQt6.QtCore import Qt, QItemSelection
 
-from ui_components import (create_primary_button, create_secondary_button,
-                           create_success_button, create_danger_button,
-                           create_step_title, create_info_label, create_success_label,
-                           create_slider_with_label, create_checkbox, create_groupbox,
-                           CollapsibleSection)
+from ui_components import (confirm_action, create_primary_button,
+                           create_secondary_button, create_success_button,
+                           create_danger_button, create_step_title,
+                           create_info_label, create_success_label,
+                           create_slider_with_label, create_checkbox,
+                           create_groupbox, CollapsibleSection)
+from ui_dialogs import show_info, show_toast, show_warning
 from stitching_canvas import StitchingCanvas
 
 
@@ -37,6 +39,7 @@ class StitchingTab(QWidget):
         lo.addWidget(self._build_sidebar())
         
         self.canvas = StitchingCanvas()
+        self.canvas.empty_import.connect(self.import_images)
         lo.addWidget(self.canvas, 1)
         
         self._connect()
@@ -71,7 +74,7 @@ class StitchingTab(QWidget):
         import_row.addWidget(btn_import_dir)
         v.addLayout(import_row)
         
-        self.lbl_image_count = create_info_label("已导入: 0 张")
+        self.lbl_image_count = create_info_label("已导入：0 张")
         v.addWidget(self.lbl_image_count)
         
         # 图像列表
@@ -83,7 +86,7 @@ class StitchingTab(QWidget):
         
         list_row = QHBoxLayout()
         btn_remove_selected = create_danger_button("移除", self.remove_selected)
-        btn_clear_all = create_danger_button("清空", self.clear_all)
+        btn_clear_all = create_danger_button("清空", self.confirm_clear_all)
         list_row.addWidget(btn_remove_selected)
         list_row.addWidget(btn_clear_all)
         v.addLayout(list_row)
@@ -138,15 +141,15 @@ class StitchingTab(QWidget):
     
     def _refresh(self):
         """刷新界面状态"""
-        self.lbl_image_count.setText(f"已导入: {len(self.images)} 张")
+        self.lbl_image_count.setText(f"已导入：{len(self.images)} 张")
         
         marked_count = sum(1 for img in self.canvas.images if img['marked'])
         total = len(self.canvas.images)
-        self.lbl_mark_status.setText(f"已标记: {marked_count}/{total} 张")
+        self.lbl_mark_status.setText(f"已标记：{marked_count}/{total} 张")
         
         if self.canvas.stitched_image is not None:
             h, w = self.canvas.stitched_image.shape[:2]
-            self.lbl_stitch_status.setText(f"拼接完成: {w} x {h} 像素")
+            self.lbl_stitch_status.setText(f"拼接完成：{w} x {h} 像素")
             self.btn_analyze.setEnabled(True)
         else:
             self.lbl_stitch_status.setText("")
@@ -180,11 +183,17 @@ class StitchingTab(QWidget):
                 paths.append(os.path.join(dir_path, f))
         
         if not paths:
-            QMessageBox.information(self, "提示", "所选文件夹中没有找到图像文件")
+            show_info(self, "提示", "所选文件夹中没有找到图像文件")
             return
         
         self._load_images(paths)
     
+    def add_images(self, paths):
+        """批量追加图片（拖拽导入与外部调用共用）。"""
+        paths = [path for path in paths if os.path.isfile(path)]
+        if paths:
+            self._load_images(paths)
+
     def _load_images(self, paths):
         """加载图像列表"""
         loaded = 0
@@ -205,7 +214,7 @@ class StitchingTab(QWidget):
         if loaded > 0:
             self.canvas.set_images(self.images)
             self._refresh()
-            QMessageBox.information(self, "成功", f"成功导入 {loaded} 张图像")
+            show_toast(self, f"已导入 {loaded} 张图像")
     
     def _read_image(self, path):
         """读取图像文件（支持TIF）"""
@@ -261,6 +270,16 @@ class StitchingTab(QWidget):
         self.canvas.set_images(self.images)
         self._refresh()
     
+    def confirm_clear_all(self):
+        if not self.images:
+            return False
+        if not confirm_action(
+                self, '清空已导入图像',
+                '将移除列表中的全部图像及当前拼接结果。\n此操作不可撤销。'):
+            return False
+        self.clear_all()
+        return True
+
     def clear_all(self):
         """清空所有图像"""
         self.images.clear()
@@ -280,7 +299,7 @@ class StitchingTab(QWidget):
     def toggle_mark_mode(self):
         """切换标定模式"""
         if not self.canvas.images:
-            QMessageBox.information(self, "提示", "请先导入图像")
+            show_info(self, "提示", "请先导入图像")
             return
         
         if self.canvas.mark_mode:
@@ -300,7 +319,7 @@ class StitchingTab(QWidget):
         # 自动切换到下一张图
         if not self.canvas.next_image():
             # 如果已经是最后一张，提示完成
-            QMessageBox.information(self, "完成", "所有图像已标记完成！")
+            show_toast(self, "所有图像已标记完成")
             self.canvas.stop_mark_mode()
             self.btn_mark.setText("开始标定")
             self.btn_mark.setChecked(False)
@@ -310,12 +329,12 @@ class StitchingTab(QWidget):
     def stitch_images(self):
         """开始拼接"""
         if not self.canvas.images:
-            QMessageBox.information(self, "提示", "请先导入图像")
+            show_info(self, "提示", "请先导入图像")
             return
         
         marked_count = sum(1 for img in self.canvas.images if img['marked'])
         if marked_count < 2:
-            QMessageBox.information(self, "提示", "请至少标记两张图像")
+            show_info(self, "提示", "请至少标记两张图像")
             return
         
         from PyQt6.QtWidgets import QProgressDialog
@@ -341,7 +360,7 @@ class StitchingTab(QWidget):
         
         if result is not None:
             self._refresh()
-            QMessageBox.information(self, "成功", "拼接完成")
+            show_toast(self, "拼接完成")
     
     def on_stitch_completed(self):
         """拼接完成"""
@@ -352,21 +371,21 @@ class StitchingTab(QWidget):
     def send_to_analysis(self):
         """发送到空洞分析"""
         if self.canvas.stitched_image is None:
-            QMessageBox.information(self, "提示", "请先完成拼接")
+            show_info(self, "提示", "请先完成拼接")
             return
         
         main_window = self.window()
         if hasattr(main_window, 'set_stitching_result'):
             main_window.set_stitching_result(self.canvas.stitched_image, None)
             main_window.tab_widget.setCurrentWidget(main_window.analysis_tab)
-            QMessageBox.information(self, "成功", "已发送到空洞分析模块")
+            show_toast(self, "已发送到空洞分析模块")
     
     # ========== 导出 ==========
     
     def save_stitched(self):
         """保存拼接图"""
         if self.canvas.stitched_image is None:
-            QMessageBox.information(self, "提示", "请先完成拼接")
+            show_info(self, "提示", "请先完成拼接")
             return
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -389,7 +408,7 @@ class StitchingTab(QWidget):
         tip = f"已保存到：{path}"
         tip += ("\n并已复制到剪贴板，可直接 Ctrl+V 粘贴到 PPT/Word √"
                 if ok_copy else f"\n（复制到剪贴板失败：{why}）")
-        QMessageBox.information(self, "成功", tip)
+        show_info(self, "成功", tip)
 
     def copy_to_clipboard(self, silent=False):
         """把拼接图复制到系统剪贴板（BGR/灰度 numpy → QImage）
@@ -399,7 +418,7 @@ class StitchingTab(QWidget):
         img = self.canvas.stitched_image
         if img is None:
             if not silent:
-                QMessageBox.information(self, "提示", "请先完成拼接")
+                show_info(self, "提示", "请先完成拼接")
             return False, '尚未拼接'
         try:
             import numpy as np
@@ -418,12 +437,12 @@ class StitchingTab(QWidget):
                 return False, '剪贴板不可用'
             cb.setImage(q)
             if not silent:
-                QMessageBox.information(
+                show_info(
                     self, "已复制",
                     f"拼接图（{w}×{h}）已复制到剪贴板，可直接 Ctrl+V 粘贴 √")
             return True, ''
         except Exception as e:
             if not silent:
-                QMessageBox.warning(self, "提示", f"复制到剪贴板失败：{e}")
+                show_warning(self, "提示", f"复制到剪贴板失败：{e}")
             return False, f'{type(e).__name__}: {e}'
 
