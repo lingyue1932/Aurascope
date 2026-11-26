@@ -433,6 +433,7 @@ class MainWindow(QMainWindow):
         geometry = settings.value('ui/geometry')
         if geometry is not None:
             self.restoreGeometry(geometry)
+            self._ensure_on_screen()
         window_state = settings.value('ui/window_state')
         if window_state is not None:
             self.restoreState(window_state)
@@ -448,6 +449,22 @@ class MainWindow(QMainWindow):
             data = settings.value(f'ui/splitter/{name}')
             if data is not None:
                 widget.restoreState(data)
+
+    def _ensure_on_screen(self):
+        """上次保存的位置可能落在已断开的显示器上，兜底挪回主屏。
+
+        否则窗口会在屏幕外正常显示、也能正常关闭，用户却只看到启动图。
+        """
+        rect = self.frameGeometry()
+        screens = QApplication.screens()
+        if not screens:
+            return
+        if any(s.availableGeometry().intersects(rect) for s in screens):
+            return
+        area = (QApplication.primaryScreen() or screens[0]).availableGeometry()
+        logging.getLogger('Aurascope').warning(
+            '窗口位置 %s 不在任何屏幕内，已移回主屏', rect)
+        self.move(area.left() + 60, area.top() + 60)
 
     def closeEvent(self, event):
         if os.environ.get('QT_QPA_PLATFORM') != 'offscreen':

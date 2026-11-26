@@ -16,16 +16,27 @@ from app_version import APP_VERSION
 from logging_setup import install_excepthook, setup_logging
 
 
-def _close_splash():
-    """关掉 PyInstaller bootloader 启动图；源码运行没有 pyi_splash，直接跳过。"""
+def _close_splash(attempt=1):
+    """关掉 PyInstaller bootloader 启动图；源码运行没有 pyi_splash，直接跳过。
+
+    启动图是独立进程的置顶小窗，只有 pyi_splash.close() 能收掉；
+    一旦失败用户就会一直看到它盖在主窗口上（表现为“卡在启动界面”）。
+    因此这里不吞异常：失败写日志并重试，便于事后定位。
+    """
+    logger = logging.getLogger('Aurascope')
     try:
         import pyi_splash
     except ImportError:
+        if getattr(sys, 'frozen', False):
+            logger.warning('启动图模块 pyi_splash 缺失，启动图将无法关闭')
         return
     try:
         pyi_splash.close()
+        logger.info('启动图已关闭')
     except Exception:
-        pass
+        logger.warning('关闭启动图失败（第 %d 次）', attempt, exc_info=True)
+        if attempt < 3:
+            QTimer.singleShot(1500, lambda: _close_splash(attempt + 1))
 
 
 def main():
@@ -65,6 +76,9 @@ def main():
     window.destroyed.connect(lambda *_: app.quit())
     window.show()
     logger.info('主窗口已显示')
+    # 启动图若还在，会把主窗口盖住；主动抬到前台
+    window.raise_()
+    window.activateWindow()
     # 等窗口画出第一帧再撤启动图，避免白屏闪烁
     QTimer.singleShot(0, _close_splash)
     return app.exec()
