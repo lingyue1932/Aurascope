@@ -75,6 +75,21 @@ pyinstaller AurascopeV6.spec
 
 > 不要改回单文件（`--onefile`）：单文件每次启动都要把 ~100MB 解包到 `%TEMP%`，实测冷启动到主窗口 11.5s；onedir 为 0.7s。需要“单文件”外观就用安装包工具把该文件夹包起来。
 
+## 发版（一键）
+
+先在 `CHANGELOG.md` 写好 `## x.y.z — 日期` 段落，然后：
+
+```powershell
+$env:GITEE_TOKEN = '你的 Gitee 私人令牌（勾 projects）'
+.\tools\release.ps1 -Version 6.3.12
+```
+
+脚本会依次完成：改 `app_version.py` / `version_info.txt` → 跑单元测试 → PyInstaller 打包 → 打 `dist/Aurascope-x.y.z.zip` → 写 `release/latest.json` → 提交并推 GitHub + Gitee → 建 Gitee 发行版并上传附件 → 推送 `latest.json` 到发布仓 `aurascope-repo` → 线上校验。
+
+- 加 `-SkipTests` 跳过测试，加 `-SkipPush` 只做到本地 zip 与 `latest.json`（不提交、不上传）
+- 令牌只从环境变量读，脚本内不保存；用完可在 Gitee 撤销
+- 应用内更新读的是 `aurascope-repo` 上的静态 `latest.json`，不调任何平台 API，失败时回退 GitHub Release
+
 ## License
 
 MIT
