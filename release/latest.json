@@ -1,7 +1,7 @@
 {
-  "version": "6.3.9",
-  "url": "https://gitee.com/lingyue001/aurascope-repo/releases/download/v6.3.9/Aurascope-6.3.9.zip",
-  "page": "https://gitee.com/lingyue001/aurascope-repo/releases/tag/v6.3.9",
-  "notes": "更新源切换到独立发布仓库；进度窗非模态（更新时可最小化）",
-  "size": 95818873
+  "version": "6.3.11",
+  "url": "https://gitee.com/lingyue001/aurascope-repo/releases/download/6.3.11/Aurascope-6.3.11.zip",
+  "page": "https://gitee.com/lingyue001/aurascope-repo/releases/tag/6.3.11",
+  "notes": "剪切力页新增圆形（输入直径，面积=πD²/4）与直接输入面积两种方式；同时包含启动加固：启动图关闭失败会重试并记录日志，窗口位置不在当前屏幕内时自动移回主屏",
+  "size": 95821284
 }
