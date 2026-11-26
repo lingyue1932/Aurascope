@@ -51,24 +51,51 @@ goto wait
 
 :swap
 if not exist "%STAGE%\\_internal" goto rollback
-move "%INSTALL%\\_internal" "%INSTALL%\\_internal_old" >> "%LOG%" 2>&1
-if errorlevel 1 goto rollback
-move "%STAGE%\\_internal" "%INSTALL%\\_internal" >> "%LOG%" 2>&1
-if errorlevel 1 goto restore
-move /Y "%STAGE%\\%EXE%" "%INSTALL%\\%EXE%" >> "%LOG%" 2>&1
-if errorlevel 1 goto restore
+
+rem retry each move: AV/index may still hold the just-copied files
+set "TRIES=0"
+:mv_old_internal
+move "%INSTALL%\\_internal" "%INSTALL%\\_internal_old" >nul 2>&1
+if not errorlevel 1 goto mv_new_internal
+set /a TRIES+=1
+if %TRIES% GEQ 10 goto rollback
+echo [%DATE% %TIME%] retry move _internal (1) >> "%LOG%"
+ping -n 2 127.0.0.1 >nul
+goto mv_old_internal
+
+:mv_new_internal
+set "TRIES=0"
+:mv_new_internal_loop
+move "%STAGE%\\_internal" "%INSTALL%\\_internal" >nul 2>&1
+if not errorlevel 1 goto mv_exe
+set /a TRIES+=1
+if %TRIES% GEQ 10 goto restore
+ping -n 2 127.0.0.1 >nul
+goto mv_new_internal_loop
+
+:mv_exe
+set "TRIES=0"
+:mv_exe_loop
+move /Y "%STAGE%\\%EXE%" "%INSTALL%\\%EXE%" >nul 2>&1
+if not errorlevel 1 goto swapped
+set /a TRIES+=1
+if %TRIES% GEQ 10 goto restore
+ping -n 2 127.0.0.1 >nul
+goto mv_exe_loop
+
+:swapped
 echo [%DATE% %TIME%] swap ok >> "%LOG%"
 start "" "%INSTALL%\\%EXE%"
 ping -n 4 127.0.0.1 >nul
-rmdir /s /q "%INSTALL%\\_internal_old" >> "%LOG%" 2>&1
-rmdir /s /q "%STAGE%" >> "%LOG%" 2>&1
+rmdir /s /q "%INSTALL%\\_internal_old" >nul 2>&1
+rmdir /s /q "%STAGE%" >nul 2>&1
 exit /b
 
 :restore
 echo [%DATE% %TIME%] swap failed, restoring old files >> "%LOG%"
-if exist "%INSTALL%\\_internal" move "%INSTALL%\\_internal" "%INSTALL%\\_internal_new_failed" >> "%LOG%" 2>&1
-if exist "%INSTALL%\\_internal_old" move "%INSTALL%\\_internal_old" "%INSTALL%\\_internal" >> "%LOG%" 2>&1
-rmdir /s /q "%INSTALL%\\_internal_new_failed" >> "%LOG%" 2>&1
+if exist "%INSTALL%\\_internal" move "%INSTALL%\\_internal" "%INSTALL%\\_internal_new_failed" >nul 2>&1
+if exist "%INSTALL%\\_internal_old" move "%INSTALL%\\_internal_old" "%INSTALL%\\_internal" >nul 2>&1
+rmdir /s /q "%INSTALL%\\_internal_new_failed" >nul 2>&1
 goto rollback
 
 :rollback
