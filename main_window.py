@@ -811,10 +811,16 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QProgressDialog
         from updater import UpdateDownloader
 
+        if getattr(self, '_update_busy', False):
+            show_info(self, '更新', '更新正在进行中，请稍候。')
+            return
+        self._update_busy = True
+
         asset = info.get('asset') or {}
         progress = QProgressDialog('正在下载更新…', '取消', 0, 100, self)
         progress.setWindowTitle('下载更新')
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        # 非模态：下载/准备期间主窗口仍可操作、可最小化，不占用界面
+        progress.setWindowModality(Qt.WindowModality.NonModal)
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
         progress.setAutoReset(False)
@@ -833,6 +839,7 @@ class MainWindow(QMainWindow):
             progress.close()
             downloader.deleteLater()
             self._update_downloader = None
+            self._update_busy = False
             show_warning(self, '更新失败',
                          f'{message}\n\n可改用「前往下载」手动更新。')
 
@@ -873,13 +880,16 @@ class MainWindow(QMainWindow):
         if box.clickedButton() is not now:
             show_info(self, '更新',
                       '更新包已保留，下次可从「帮助 → 检查更新」重新下载。')
+            self._update_busy = False
             return
 
         # 先把新版本复制到 <安装目录>_new：此时安装目录完全没被动，取消也安全
         staging = staging_dir(target_dir)
-        dialog = QProgressDialog('正在准备更新文件…', '取消', 0, 100, self)
+        dialog = QProgressDialog('正在准备更新文件…（可最小化窗口）', '取消',
+                                 0, 100, self)
         dialog.setWindowTitle('准备更新')
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        # 非模态：复制 240MB 期间主窗口仍可最小化/操作
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
         dialog.setMinimumDuration(0)
         dialog.setAutoClose(False)
         dialog.setAutoReset(False)
@@ -902,11 +912,13 @@ class MainWindow(QMainWindow):
             dialog.close()
             shutil.rmtree(staging, ignore_errors=True)
             logging.getLogger('Aurascope').exception('更新文件预复制失败')
+            self._update_busy = False
             show_warning(self, '更新失败', f'准备更新文件失败：{exc}')
             return
         dialog.close()
         if copied < 0:
             shutil.rmtree(staging, ignore_errors=True)
+            self._update_busy = False
             show_info(self, '更新', '已取消更新，当前版本继续可用。')
             return
         logging.getLogger('Aurascope').info(
@@ -920,6 +932,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             shutil.rmtree(staging, ignore_errors=True)
             logging.getLogger('Aurascope').exception('启动更新交换脚本失败')
+            self._update_busy = False
             show_warning(self, '更新失败', f'无法启动更新脚本：{exc}')
             return
         QApplication.instance().quit()
