@@ -21,7 +21,7 @@ LATEST_RELEASE_URL = f'https://api.github.com/repos/{REPO}/releases/latest'
 # 国内更新源：仓库里的一个静态 latest.json（不走平台 API，没有配额限制）。
 # 换平台（Gitee / 对象存储 / 内网服务器）只需改这一个地址，代码不用动。
 # 格式：{"version", "url"(zip), "page", "notes", "size"}
-FEED_URL = 'https://gitee.com/lingyue001/aurascope/raw/main/release/latest.json'
+FEED_URL = 'https://gitee.com/lingyue001/aurascope-repo/raw/main/latest.json'
 
 
 def parse_release_tag(tag):

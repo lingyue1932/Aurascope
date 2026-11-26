@@ -1,7 +1,7 @@
 {
-  "version": "6.3.8",
-  "url": "https://gitee.com/lingyue001/aurascope/releases/download/v6.3.8/Aurascope-6.3.8.zip",
-  "page": "https://gitee.com/lingyue001/aurascope/releases/tag/v6.3.8",
-  "notes": "更新进度窗改为非模态：下载与准备文件期间主窗口不再被锁住，可以正常操作、可以最小化；更新进行中重复点检查更新会提示正在更新，避免重复下载",
-  "size": 95818287
+  "version": "6.3.9",
+  "url": "https://gitee.com/lingyue001/aurascope-repo/releases/download/v6.3.9/Aurascope-6.3.9.zip",
+  "page": "https://gitee.com/lingyue001/aurascope-repo/releases/tag/v6.3.9",
+  "notes": "更新源切换到独立发布仓库；进度窗非模态（更新时可最小化）",
+  "size": 95818873
 }

@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(6, 3, 8, 0),
-    prodvers=(6, 3, 8, 0),
+    filevers=(6, 3, 9, 0),
+    prodvers=(6, 3, 9, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,12 +15,12 @@ VSVersionInfo(
         '080404B0',
         [StringStruct('CompanyName', 'Innolight'),
          StringStruct('FileDescription', 'Aurascope 视觉检测与数据分析'),
-         StringStruct('FileVersion', '6.3.8'),
+         StringStruct('FileVersion', '6.3.9'),
          StringStruct('InternalName', 'Aurascope'),
          StringStruct('LegalCopyright', 'Copyright (C) 2026 Innolight'),
          StringStruct('OriginalFilename', 'Aurascope.exe'),
          StringStruct('ProductName', 'Aurascope'),
-         StringStruct('ProductVersion', '6.3.8')])
+         StringStruct('ProductVersion', '6.3.9')])
     ]),
     VarFileInfo([VarStruct('Translation', [0x0804, 1200])])
   ]
