@@ -852,7 +852,7 @@ class MainWindow(QMainWindow):
         """应用内预复制到 staging，退出后脚本只做几毫秒的改名交换并重启。"""
         from PyQt6.QtWidgets import QProgressDialog
         from updater import (launch_swap, stage_files, staging_dir,
-                             tree_size, write_update_notice)
+                             write_update_notice)
 
         source_dir = os.path.dirname(exe_path)
         target_dir = app_dir()
@@ -877,7 +877,6 @@ class MainWindow(QMainWindow):
 
         # 先把新版本复制到 <安装目录>_new：此时安装目录完全没被动，取消也安全
         staging = staging_dir(target_dir)
-        total = tree_size(source_dir)
         dialog = QProgressDialog('正在准备更新文件…', '取消', 0, 100, self)
         dialog.setWindowTitle('准备更新')
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -910,11 +909,12 @@ class MainWindow(QMainWindow):
             shutil.rmtree(staging, ignore_errors=True)
             show_info(self, '更新', '已取消更新，当前版本继续可用。')
             return
-        logger.info('更新文件已预复制 %d 字节到 %s', copied, staging)
+        logging.getLogger('Aurascope').info(
+            '更新文件已预复制 %d 字节到 %s', copied, staging)
 
         version = (info or {}).get('version') or ''
-        write_update_notice(version)
         try:
+            write_update_notice(version)
             # 用新包内的 exe 名启动：版本改了文件名时也能接上
             launch_swap(staging, target_dir, os.path.basename(exe_path))
         except Exception as exc:
