@@ -1,8 +1,10 @@
 """预覆金锡剪切力计算器Tab — 参考MIL-STD-883H Method 2019.9"""
 
+import math
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                              QScrollArea, QLabel, QLineEdit, QGridLayout,
-                             QSizePolicy, QApplication)
+                             QComboBox, QSizePolicy, QApplication)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDoubleValidator
 
@@ -24,6 +26,7 @@ class ShearTab(QWidget):
     def __init__(self):
         super().__init__()
         self._force_2x_g = 0.0
+        self._last_area_mm2 = 0.0
         self.init_ui()
 
     def init_ui(self):
@@ -58,15 +61,23 @@ class ShearTab(QWidget):
         v.addWidget(sub)
 
         v.addWidget(create_step_title("芯片尺寸"))
-        grid = QGridLayout()
-        grid.setSpacing(12)
-        self.inp_len = self._make_input("输入长度")
-        self.inp_wid = self._make_input("输入宽度")
-        grid.addWidget(QLabel("长度（mm）"), 0, 0)
-        grid.addWidget(self.inp_len, 0, 1)
-        grid.addWidget(QLabel("宽度（mm）"), 1, 0)
-        grid.addWidget(self.inp_wid, 1, 1)
-        v.addLayout(grid)
+        self.cbo_shape = QComboBox()
+        self.cbo_shape.addItems(["矩形（输入长、宽）", "圆形（输入直径）",
+                                 "已知面积（直接输入）"])
+        self.cbo_shape.currentIndexChanged.connect(self._on_shape_changed)
+        v.addWidget(self.cbo_shape)
+
+        # 矩形：长 x 宽
+        self.row_rect = self._build_rect_row()
+        v.addWidget(self.row_rect)
+        # 圆形：直径 -> π x D² / 4
+        self.row_circle = self._build_circle_row()
+        self.row_circle.setVisible(False)
+        v.addWidget(self.row_circle)
+        # 已知面积：直接输入 mm²（圆形/异形芯片量出来的面积）
+        self.row_area = self._build_area_row()
+        self.row_area.setVisible(False)
+        v.addWidget(self.row_area)
 
         btn_lo = QHBoxLayout()
         btn_lo.addWidget(create_secondary_button("一键清零", self.reset))
@@ -132,7 +143,7 @@ class ShearTab(QWidget):
         copy_lo.addWidget(self.btn_copy)
         v.addLayout(copy_lo)
 
-        self.prompt = create_info_label("请输入芯片尺寸后自动计算")
+        self.prompt = create_info_label("输入尺寸或面积后自动计算")
         v.addWidget(self.prompt)
 
         v.addStretch()
@@ -142,6 +153,49 @@ class ShearTab(QWidget):
         outer.addWidget(scroll)
         scroll.setWidget(content)
         return card
+
+    def _build_rect_row(self):
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(12)
+        self.inp_len = self._make_input("输入长度")
+        self.inp_wid = self._make_input("输入宽度")
+        grid.addWidget(QLabel("长度（mm）"), 0, 0)
+        grid.addWidget(self.inp_len, 0, 1)
+        grid.addWidget(QLabel("宽度（mm）"), 1, 0)
+        grid.addWidget(self.inp_wid, 1, 1)
+        return box
+
+    def _build_circle_row(self):
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(12)
+        self.inp_dia = self._make_input("输入直径")
+        grid.addWidget(QLabel("直径（mm）"), 0, 0)
+        grid.addWidget(self.inp_dia, 0, 1)
+        hint = create_info_label("面积 = π × 直径² ÷ 4")
+        grid.addWidget(hint, 1, 0, 1, 2)
+        return box
+
+    def _build_area_row(self):
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(12)
+        self.inp_area = self._make_input("输入面积")
+        grid.addWidget(QLabel("面积（mm²）"), 0, 0)
+        grid.addWidget(self.inp_area, 0, 1)
+        hint = create_info_label("适用于异形/已量好面积的芯片（按外形轮廓计）")
+        grid.addWidget(hint, 1, 0, 1, 2)
+        return box
+
+    def _on_shape_changed(self, index):
+        self.row_rect.setVisible(index == 0)
+        self.row_circle.setVisible(index == 1)
+        self.row_area.setVisible(index == 2)
+        self.calculate()
 
     def _make_input(self, placeholder):
         inp = QLineEdit()
@@ -180,7 +234,9 @@ class ShearTab(QWidget):
             ("  - 面积 > 64x10⁻⁴ in²: 标准要求 min 2.5 kgf (此计算器暂不适用)", "InfoLabel"),
             ("", "InfoLabel"),
             ("计算公式", "StepTitle"),
-            ("  1. 面积(mm²) = 长度 x 宽度", "InfoLabel"),
+            ("  1. 面积(mm²)：矩形 = 长 x 宽", "InfoLabel"),
+            ("                     圆形 = π x 直径² / 4", "InfoLabel"),
+            ("                     也可直接输入已知面积", "InfoLabel"),
             ("  2. 面积(in²) = 面积(mm²) / 645.16", "InfoLabel"),
             ("  3. 1X 力值(g) = 面积(in²) x 400 x 1000", "InfoLabel"),
             ("     (即 0.04 kg / 1.0x10⁻⁴ in²)", "InfoLabel"),
@@ -203,19 +259,33 @@ class ShearTab(QWidget):
     # ---- 计算 ----
 
     def calculate(self):
+        # 三种输入互斥：矩形长宽 / 圆形直径 / 直接面积（mm²）
         try:
-            length = float(self.inp_len.text())
-            width = float(self.inp_wid.text())
+            shape = self.cbo_shape.currentIndex()
+            if shape == 1:
+                diameter = float(self.inp_dia.text())
+                if diameter <= 0:
+                    self._clear_results()
+                    return
+                area_mm2 = math.pi * diameter * diameter / 4.0
+            elif shape == 2:
+                area_mm2 = float(self.inp_area.text())
+                if area_mm2 <= 0:
+                    self._clear_results()
+                    return
+            else:
+                length = float(self.inp_len.text())
+                width = float(self.inp_wid.text())
+                if length <= 0 or width <= 0:
+                    self._clear_results()
+                    return
+                area_mm2 = length * width
         except (ValueError, TypeError):
             self._clear_results()
             return
 
-        if length <= 0 or width <= 0:
-            self._clear_results()
-            return
-
-        area_mm2 = length * width
         area_in2 = area_mm2 / MM2_PER_IN2
+        self._last_area_mm2 = area_mm2
 
         self.lbl_area_mm2.setText(f"{area_mm2:.6f} 平方毫米")
         self.lbl_area_in2.setText(f"{area_in2:.6f} 平方英寸")
@@ -253,6 +323,7 @@ class ShearTab(QWidget):
         self.prompt.setVisible(False)
 
     def _clear_results(self):
+        self._last_area_mm2 = 0.0
         self.lbl_area_mm2.setText("0.0000 平方毫米")
         self.lbl_area_in2.setText("0.0000 平方英寸")
         self.area_warn.setVisible(False)
@@ -276,6 +347,8 @@ class ShearTab(QWidget):
     def reset(self):
         self.inp_len.clear()
         self.inp_wid.clear()
+        self.inp_dia.clear()
+        self.inp_area.clear()
         self._clear_results()
 
     def copy_force(self):
