@@ -18,6 +18,11 @@ from app_version import APP_VERSION
 REPO = 'lingyue1932/Aurascope'
 LATEST_RELEASE_URL = f'https://api.github.com/repos/{REPO}/releases/latest'
 
+# 国内更新源：仓库里的一个静态 latest.json（不走平台 API，没有配额限制）。
+# 换平台（Gitee / 对象存储 / 内网服务器）只需改这一个地址，代码不用动。
+# 格式：{"version", "url"(zip), "page", "notes", "size"}
+FEED_URL = 'https://gitee.com/lingyue001/aurascope/raw/main/release/latest.json'
+
 
 def parse_release_tag(tag):
     """把 GitHub tag（可带 v 前缀）转成 Version；非法返回 None。"""
@@ -84,6 +89,26 @@ def parse_latest_release(payload):
     }
 
 
+def parse_feed(payload):
+    """解析静态 latest.json；也兼容 GitHub release 结构（含 tag_name）。"""
+    if not isinstance(payload, dict):
+        return None
+    if 'tag_name' in payload:
+        return parse_latest_release(payload)
+    version = parse_release_tag(payload.get('version') or '')
+    if version is None:
+        return None
+    zip_url = payload.get('url') or ''
+    return {
+        'version': str(version),
+        'tag': payload.get('version') or '',
+        'url': payload.get('page') or zip_url,
+        'notes': payload.get('notes') or '',
+        'asset': ({'name': payload.get('name') or '', 'url': zip_url,
+                   'size': int(payload.get('size') or 0)} if zip_url else None),
+    }
+
+
 class UpdateChecker(QObject):
     update_found = pyqtSignal(dict)
     check_finished = pyqtSignal(object, str)   # (info 或 None, 错误文案)
@@ -95,26 +120,45 @@ class UpdateChecker(QObject):
     def check(self, current=APP_VERSION, manual=False):
         # 开发/验收用：AURASCOPE_UPDATE_JSON 可指向本地或自建的 release JSON，
         # 复现「发现新版本 → 下载并更新」全链路，不必真的发版。
-        url = os.environ.get('AURASCOPE_UPDATE_JSON') or LATEST_RELEASE_URL
-        if os.environ.get('AURASCOPE_UPDATE_JSON'):
-            logging.getLogger('Aurascope').info('使用自定义更新源：%s', url)
+        override = os.environ.get('AURASCOPE_UPDATE_JSON')
+        if override:
+            logging.getLogger('Aurascope').info('使用自定义更新源：%s', override)
+            self._request(override, current, manual, fallback=False)
+        elif FEED_URL:
+            # 优先国内静态源；拿不到再回退 GitHub API
+            self._request(FEED_URL, current, manual, fallback=True)
+        else:
+            self._request(LATEST_RELEASE_URL, current, manual, fallback=False)
+
+    def _request(self, url, current, manual, fallback):
         request = QNetworkRequest(QUrl(url))
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader,
                           'Aurascope-Updater')
+        # 静态 JSON 可能被 CDN 缓存，强制每次都走网络
+        request.setAttribute(
+            QNetworkRequest.Attribute.CacheLoadControlAttribute,
+            QNetworkRequest.CacheLoadControl.AlwaysNetwork)
         request.setTransferTimeout(8000)
         reply = self._manager.get(request)
-        reply.finished.connect(lambda: self._on_finished(reply, current, manual))
+        reply.finished.connect(
+            lambda: self._on_finished(reply, current, manual, fallback))
 
-    def _on_finished(self, reply, current, manual=False):
+    def _on_finished(self, reply, current, manual=False, fallback=False):
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
+                if fallback:
+                    logging.getLogger('Aurascope').info(
+                        '静态更新源不可用（%s），回退 GitHub', reply.errorString())
+                    self._request(LATEST_RELEASE_URL, current, manual,
+                                  fallback=False)
+                    return
                 logging.getLogger('Aurascope').warning(
                     '检查更新失败：%s', reply.errorString())
                 if manual:
                     self.check_finished.emit(None, reply.errorString())
                 return
             payload = json.loads(bytes(reply.readAll()).decode('utf-8'))
-            info = parse_latest_release(payload)
+            info = parse_feed(payload)
             if info and release_is_newer(info['tag'], current):
                 logging.getLogger('Aurascope').info(
                     '发现新版本 %s', info.get('tag'))

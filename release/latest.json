@@ -1,0 +1,7 @@
+{
+  "version": "6.3.7",
+  "url": "https://gitee.com/lingyue001/aurascope/releases/download/v6.3.7/Aurascope-6.3.7.zip",
+  "page": "https://gitee.com/lingyue001/aurascope/releases/tag/v6.3.7",
+  "notes": "更新源切换到国内 Gitee（读静态 latest.json，不再受 GitHub API 限流影响）；更新交换步骤加入重试，避免文件被占用导致回滚",
+  "size": 95818994
+}

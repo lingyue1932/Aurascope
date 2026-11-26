@@ -87,6 +87,36 @@ class UpdateCheckLogicTests(unittest.TestCase):
             'tag_name': 'v6.3.1', 'html_url': 'https://x', 'body': '',
             'draft': False, 'prerelease': False})['asset'])
 
+    def test_parse_feed_reads_static_json(self):
+        info = update_check.parse_feed({
+            'version': '6.3.7',
+            'url': 'https://gitee.com/x/Aurascope/releases/download/v6.3.7/app.zip',
+            'page': 'https://gitee.com/x/Aurascope/releases/tag/v6.3.7',
+            'notes': '修复自更新',
+            'size': 123,
+        })
+        self.assertEqual(info['version'], '6.3.7')
+        self.assertEqual(info['tag'], '6.3.7')
+        self.assertEqual(info['url'],
+                         'https://gitee.com/x/Aurascope/releases/tag/v6.3.7')
+        self.assertEqual(info['notes'], '修复自更新')
+        self.assertEqual(info['asset']['url'],
+                         'https://gitee.com/x/Aurascope/releases/download/v6.3.7/app.zip')
+        self.assertEqual(info['asset']['size'], 123)
+
+    def test_parse_feed_accepts_github_shape(self):
+        info = update_check.parse_feed({
+            'tag_name': 'v6.3.7', 'html_url': 'https://x', 'body': 'note',
+            'draft': False, 'prerelease': False,
+            'assets': [{'name': 'a.zip', 'browser_download_url': 'https://x/a.zip'}]})
+        self.assertEqual(info['version'], '6.3.7')
+        self.assertEqual(info['asset']['url'], 'https://x/a.zip')
+
+    def test_parse_feed_rejects_invalid_payload(self):
+        for payload in (None, {}, {'version': 'latest'}, 'x'):
+            with self.subTest(payload=payload):
+                self.assertIsNone(update_check.parse_feed(payload))
+
 
 if __name__ == '__main__':
     unittest.main()
