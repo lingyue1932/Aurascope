@@ -59,7 +59,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._manual_check = False
         self.setWindowTitle(f"Aurascope {APP_VERSION}")
-        # 去掉系统标题栏：标题、菜单、最小化/最大化/关闭统一由自绘 TitleBar 承担
+        # 去掉系统标题栏：标题、菜单、最小化/最大化/关闭统一由自绘 TitleBar 承担。
+        # 不用 ExpandedClientAreaHint：Qt 6.11 在 Windows 上会连原生标题栏一起画出来
+        #（实测会出现双标题栏）。无边框 + WM_NCHITTEST 是本项目验证可行的方案。
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.resize(1000, 600)
         self.setAcceptDrops(True)
@@ -268,10 +270,12 @@ class MainWindow(QMainWindow):
         super().changeEvent(event)
 
     def nativeEvent(self, event_type, message):
-        """无边框窗口的八向缩放：把四周 6px 交给系统 WM_NCHITTEST。
+        """无边框窗口的八向缩放：把四周 8px 交给系统 WM_NCHITTEST。
 
         注意：这里绝不能 `return super().nativeEvent(...)`——
         PyQt6 下基类返回的 sip.voidptr 会被重复处理，直接 access violation（已踩过）。
+        另外 Qt 自己会处理 WM_SETCURSOR 把光标改回箭头，所以这里连光标也一并接管，
+        否则用户看不到可拖拽提示，会以为窗口不能缩放。
         """
         if (sys.platform == 'win32' and not self.isMaximized()
                 and event_type == b'windows_generic_MSG'):
@@ -279,14 +283,29 @@ class MainWindow(QMainWindow):
             import ctypes.wintypes
             try:
                 msg = ctypes.wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0084:
+                if msg.message == 0x0084:                       # WM_NCHITTEST
                     hit = self._hit_test(msg.lParam)
                     if hit is not None:
                         return True, hit
+                elif msg.message == 0x0020:                     # WM_SETCURSOR
+                    hit = msg.lParam & 0xFFFF
+                    cursor_id = self._resize_cursor_id(hit)
+                    if cursor_id:
+                        ctypes.windll.user32.SetCursor(
+                            ctypes.windll.user32.LoadCursorW(None, cursor_id))
+                        return True, 1
             except Exception:
                 logging.getLogger('Aurascope').debug(
-                    'WM_NCHITTEST 处理失败', exc_info=True)
+                    'WM_NCHITTEST/WM_SETCURSOR 处理失败', exc_info=True)
         return False, 0
+
+    @staticmethod
+    def _resize_cursor_id(hit):
+        """HT 码 → 系统光标资源 ID（32644=水平、32645=垂直、32642/32643=斜向）。"""
+        return {10: 32644, 11: 32644,          # 左右
+                12: 32645, 15: 32645,          # 上下
+                13: 32642, 17: 32642,          # 左上/右下
+                14: 32643, 16: 32643}.get(hit)
 
     def _hit_test(self, lparam):
         """WM_NCHITTEST 坐标是物理像素，转回窗口内逻辑坐标再判边界。"""
@@ -297,7 +316,7 @@ class MainWindow(QMainWindow):
         ratio = screen.devicePixelRatio() if screen is not None else 1.0
         pos = self.mapFromGlobal(QPoint(int(round(x / ratio)),
                                         int(round(y / ratio))))
-        border = 6
+        border = 8
         left = pos.x() < border
         right = pos.x() >= self.width() - border
         top = pos.y() < border
