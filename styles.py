@@ -351,7 +351,7 @@ QComboBox::drop-down {{
 QComboBox QAbstractItemView {{
     background: {c['surface']};
     border: 1px solid {c['border']};
-    border-radius: 8px;
+    border-radius: 0px;
     padding: 4px;
     outline: none;
     selection-background-color: {c['accent_tint']};
@@ -539,11 +539,13 @@ DIALOG_STYLESHEET = f"QDialog {{ background-color: {_C['bg']}; }}"
 
 # 下拉弹层样式（弹层是独立窗口，全局 QSS 命中不了，需单独应用 ✗）
 POPUP_QSS = (
+    # 弹层是独立窗口，Windows 会再套一层原生方角边框（QSS 管不到，
+    # 去掉圆角避免出现“方框套圆角卡片”的双层边框
     "QComboBox QAbstractItemView {"
     f"    background: {_C['surface']};"
     f"    color: {_C['text']};"
     f"    border: 1px solid {_C['border']};"
-    "    border-radius: 8px;"
+    "    border-radius: 0px;"
     "    padding: 2px;"
     "    outline: none;"
     f"    selection-background-color: {_C['accent_tint']};"
