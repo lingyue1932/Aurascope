@@ -17,9 +17,9 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QSlider, QPushButton, QButtonGroup,
                              QTabWidget, QSpinBox, QDoubleSpinBox, QSplitter,
                              QComboBox, QMenu)
-from PyQt6.QtCore import QEvent, QPoint, Qt, QSettings, QTimer, QUrl
-from PyQt6.QtGui import (QDesktopServices, QIcon, QImage,
-                         QKeySequence, QPixmap, QShortcut)
+from PyQt6.QtCore import (QEvent, QPoint, QRect, Qt, QSettings, QTimer, QUrl)
+from PyQt6.QtGui import (QCursor, QDesktopServices, QGuiApplication, QIcon,
+                         QImage, QKeySequence, QPixmap, QShortcut)
 from PyQt6.QtWidgets import QApplication
 
 from app_paths import app_dir, resource_path
@@ -58,11 +58,17 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._manual_check = False
+        # 边缘拖拽缩放的状态（event() 里的 NonClientArea* 事件会用到）
+        self._resize_edges = Qt.Edge(0)
+        self._resize_start = QPoint()
+        self._resize_geom = QRect()
         self.setWindowTitle(f"Aurascope {APP_VERSION}")
         # 去掉系统标题栏：标题、菜单、最小化/最大化/关闭统一由自绘 TitleBar 承担。
         # 不用 ExpandedClientAreaHint：Qt 6.11 在 Windows 上会连原生标题栏一起画出来
         #（实测会出现双标题栏）。无边框 + WM_NCHITTEST 是本项目验证可行的方案。
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        # 保留 WS_MIN/MAXIMIZEBOX：这是系统肯做缩放/贴边吸附的前提之一
+        self.setWindowFlag(Qt.WindowType.WindowMinMaxButtonsHint, True)
         self.resize(1000, 600)
         self.setAcceptDrops(True)
 
@@ -269,74 +275,110 @@ class MainWindow(QMainWindow):
             self.title_bar.set_maximized(self.isMaximized())
         super().changeEvent(event)
 
-    def nativeEvent(self, event_type, message):
-        """无边框窗口的八向缩放：把四周 8px 交给系统 WM_NCHITTEST。
-
-        注意：这里绝不能 `return super().nativeEvent(...)`——
-        PyQt6 下基类返回的 sip.voidptr 会被重复处理，直接 access violation（已踩过）。
-        另外 Qt 自己会处理 WM_SETCURSOR 把光标改回箭头，所以这里连光标也一并接管，
-        否则用户看不到可拖拽提示，会以为窗口不能缩放。
-        """
-        if (sys.platform == 'win32' and not self.isMaximized()
-                and event_type == b'windows_generic_MSG'):
+    def _apply_native_frame(self):
+        """给无边框窗口补回 WS_THICKFRAME 等样式（需在窗口创建后调用）。"""
+        if sys.platform != 'win32':
+            return
+        try:
             import ctypes
-            import ctypes.wintypes
-            try:
-                msg = ctypes.wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0084:                       # WM_NCHITTEST
-                    hit = self._hit_test(msg.lParam)
-                    if hit is not None:
-                        return True, hit
-                elif msg.message == 0x0020:                     # WM_SETCURSOR
-                    hit = msg.lParam & 0xFFFF
-                    cursor_id = self._resize_cursor_id(hit)
-                    if cursor_id:
-                        ctypes.windll.user32.SetCursor(
-                            ctypes.windll.user32.LoadCursorW(None, cursor_id))
-                        return True, 1
-            except Exception:
-                logging.getLogger('Aurascope').debug(
-                    'WM_NCHITTEST/WM_SETCURSOR 处理失败', exc_info=True)
+            user32 = ctypes.windll.user32
+            hwnd = int(self.winId())
+            GWL_STYLE = -16
+            WS_THICKFRAME, WS_CAPTION = 0x00040000, 0x00C00000
+            WS_MINIMIZEBOX, WS_MAXIMIZEBOX = 0x00020000, 0x00010000
+            SWP_FLAGS = 0x0027          # FRAMECHANGED|NOSIZE|NOMOVE|NOZORDER|NOACTIVATE
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+            user32.SetWindowLongW(
+                hwnd, GWL_STYLE,
+                style | WS_THICKFRAME | WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+            user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FLAGS)
+        except Exception:
+            logging.getLogger('Aurascope').debug('补回窗口边框样式失败', exc_info=True)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not getattr(self, '_native_frame_ready', False):
+            self._native_frame_ready = True
+            self._apply_native_frame()
+
+    def nativeEvent(self, event_type, message):
+        """无边框窗口的缩放：接管 WM_NCCALCSIZE 与 WM_NCHITTEST。
+
+        注意：这里绝不能 `return super().nativeEvent(...)`——PyQt6 下基类返回的
+        sip.voidptr 会被重复处理，直接 access violation（已踩过）。
+        """
+        if (sys.platform != 'win32'
+                or event_type != b'windows_generic_MSG'):
+            return False, 0
+        import ctypes
+        import ctypes.wintypes
+        try:
+            msg = ctypes.wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0083:                      # WM_NCCALCSIZE
+                return self._on_nc_calc_size(msg)
+            if msg.message == 0x0084 and not self.isMaximized():   # WM_NCHITTEST
+                hit = self._hit_test()
+                if hit is not None:
+                    return True, hit
+        except Exception:
+            logging.getLogger('Aurascope').debug('窗口消息处理失败', exc_info=True)
         return False, 0
 
-    @staticmethod
-    def _resize_cursor_id(hit):
-        """HT 码 → 系统光标资源 ID（32644=水平、32645=垂直、32642/32643=斜向）。"""
-        return {10: 32644, 11: 32644,          # 左右
-                12: 32645, 15: 32645,          # 上下
-                13: 32642, 17: 32642,          # 左上/右下
-                14: 32643, 16: 32643}.get(hit)
-
-    def _hit_test(self, lparam):
-        """WM_NCHITTEST 坐标是物理像素，转回窗口内逻辑坐标再判边界。"""
+    def _on_nc_calc_size(self, msg):
+        """客户区铺满整个窗口：边框/标题栏不再占位，但窗口仍是可缩放的原生窗口。"""
         import ctypes
-        x = ctypes.c_short(lparam & 0xFFFF).value
-        y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
-        screen = self.screen()
-        ratio = screen.devicePixelRatio() if screen is not None else 1.0
-        pos = self.mapFromGlobal(QPoint(int(round(x / ratio)),
-                                        int(round(y / ratio))))
-        border = 8
-        left = pos.x() < border
-        right = pos.x() >= self.width() - border
-        top = pos.y() < border
-        bottom = pos.y() >= self.height() - border
-        if top and left:
-            return 13   # HTTOPLEFT
-        if top and right:
-            return 14   # HTTOPRIGHT
-        if bottom and left:
-            return 16   # HTBOTTOMLEFT
-        if bottom and right:
-            return 17   # HTBOTTOMRIGHT
-        if left:
-            return 10   # HTLEFT
-        if right:
-            return 11   # HTRIGHT
-        if top:
-            return 12   # HTTOP
-        if bottom:
-            return 15   # HTBOTTOM
+        import ctypes.wintypes
+
+        class NCCALCSIZE_PARAMS(ctypes.Structure):
+            _fields_ = [('rgrc', ctypes.wintypes.RECT * 3),
+                        ('lppos', ctypes.c_void_p)]
+
+        if msg.wParam:
+            rect = NCCALCSIZE_PARAMS.from_address(msg.lParam).rgrc[0]
+        else:
+            rect = ctypes.cast(msg.lParam,
+                               ctypes.POINTER(ctypes.wintypes.RECT)).contents
+        if self.isMaximized():
+            # 最大化时窗口矩形会超出屏幕一个边框宽，客户区要缩回可视范围
+            user32 = ctypes.windll.user32
+            cx = user32.GetSystemMetrics(32) + user32.GetSystemMetrics(92)
+            cy = user32.GetSystemMetrics(33) + user32.GetSystemMetrics(92)
+            rect.left += cx
+            rect.right -= cx
+            rect.top += cy
+            rect.bottom -= cy
+        return True, 0
+
+    def _hit_test(self):
+        """用当前光标位置判断命中哪条边（8px 热区），避免自己换算 DPI。"""
+        import ctypes
+        import ctypes.wintypes
+        user32 = ctypes.windll.user32
+        hwnd = int(self.winId())
+        pt = ctypes.wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        user32.ScreenToClient(hwnd, ctypes.byref(pt))
+        rect = ctypes.wintypes.RECT()
+        user32.GetClientRect(hwnd, ctypes.byref(rect))
+        w, h, b = rect.right, rect.bottom, 8
+        lx, rx = pt.x < b, pt.x > w - b
+        ty, by = pt.y < b, pt.y > h - b
+        if lx and ty:
+            return 13          # HTTOPLEFT
+        if rx and by:
+            return 17          # HTBOTTOMRIGHT
+        if rx and ty:
+            return 14          # HTTOPRIGHT
+        if lx and by:
+            return 16          # HTBOTTOMLEFT
+        if ty:
+            return 12          # HTTOP
+        if by:
+            return 15          # HTBOTTOM
+        if lx:
+            return 10          # HTLEFT
+        if rx:
+            return 11          # HTRIGHT
         return None
 
     def open_image_in_roi(self):
