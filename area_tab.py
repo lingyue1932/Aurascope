@@ -12,7 +12,7 @@ import zlib
 import cv2
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QDialog,
+from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QDialog,
                              QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                              QFormLayout, QFrame, QHBoxLayout, QHeaderView, QLabel,
                              QScrollArea, QSpinBox, QSplitter, QTableWidget,
@@ -22,7 +22,7 @@ from area_canvas import AreaCanvas, hit_index, mask_hit
 from image import detect_defects, otsu_threshold, polygon_to_mask
 from ui_components import (CollapsibleSection, NumericItem, align_right,
                            attach_empty_hint, confirm_action, create_checkbox,
-                           create_groupbox, create_info_label,
+                           create_combo, create_groupbox, create_info_label,
                            create_primary_button, create_secondary_button,
                            create_slider, create_slider_with_label,
                            enable_click_sort)
@@ -386,7 +386,7 @@ class DefectAreaTab(QWidget):
         length.setDecimals(9)
         length.setRange(0, 1e12)
         length.setValue(0)
-        units = QComboBox()
+        units = create_combo()
         units.setObjectName('calibrationUnit')
         units.addItems(list(UNIT_FACTORS))
         units.setCurrentText(self.unit)

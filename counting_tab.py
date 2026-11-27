@@ -4,15 +4,16 @@ from datetime import datetime
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
                               QFrame, QScrollArea, QLabel,
-                              QSpinBox, QComboBox, QMessageBox, QSizePolicy)
+                              QSpinBox, QMessageBox, QSizePolicy)
 from PyQt6.QtCore import Qt, QTimer
 
 from image import detect_objects, otsu_threshold
 from csv_export import write_csv
 from ui_components import (create_primary_button, create_secondary_button,
                            create_danger_button, create_step_title,
-                           create_checkbox, create_slider, create_divider,
-                           create_slider_with_label, create_count_result)
+                           create_checkbox, create_combo, create_slider,
+                           create_divider, create_slider_with_label,
+                           create_count_result)
 from counting_canvas import CountingCanvas
 
 
@@ -124,7 +125,7 @@ class CountingTab(QWidget):
         self.lbl_morph_val = QLabel("3")
         self.lbl_morph_val.setFixedWidth(24)
         morph_row.addWidget(self.lbl_morph_val)
-        self.cb_morph_shape = QComboBox()
+        self.cb_morph_shape = create_combo()
         self.cb_morph_shape.addItems(["椭圆", "矩形", "十字"])
         self.cb_morph_shape.currentIndexChanged.connect(self._on_morph_shape_changed)
         morph_row.addWidget(self.cb_morph_shape)

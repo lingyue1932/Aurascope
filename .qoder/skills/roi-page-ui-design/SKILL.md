@@ -132,7 +132,7 @@ ROI Tab 在 main_window.py 注册为 `'    ROI    '`，实现分布在四个文�
 ## QSS / Qt 陷阱
 
 1. QSS 不支持变量：颜色只能引用 `styles.py` 的 `_C`，或经 f-string 注入。
-2. Qt 不支持 CSS 三角：`QComboBox` 下拉端盖用浅色块（surface2 + border-left）表示可点击，不画箭头；`QSpinBox` 上下按钮宽 0 隐藏，靠输入/滚轮修改。
+2. Qt 不支持 CSS 三角：`QComboBox` 的下拉箭头由 `ui_components.ChevronComboBox` 自绘（`paintEvent` 里画 chevron，颜色 text2/禁用 text3），业务里一律用 `create_combo()` 工厂创建，不要直接 `QComboBox()`，也不要再写 `::down-arrow { image: none }`（会把箭头变空白）；`QSpinBox` 上下按钮宽 0 隐藏，靠输入/滚轮修改。
 3. 下拉弹层是独立窗口，全局 QSS 可能命中不了：必须调用 `style_combo_popups(widget)`（应用 POPUP_QSS、去焦点框委托、按项数设弹层高度）。
 4. 输入框 focus 用 2px accent 边框并回收 padding，避免跳动。
 5. `QSplitter` 手柄默认透明，只 hover 显示 border、pressed 显示 accent。

@@ -4,15 +4,16 @@ import math
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                              QScrollArea, QLabel, QLineEdit, QGridLayout,
-                             QComboBox, QSizePolicy, QApplication)
+                             QSizePolicy, QApplication)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDoubleValidator
 
 from styles import _C
 from ui_components import (create_primary_button, create_secondary_button,
                            create_step_title, create_card_title,
-                           create_card_subtitle, create_stat_value,
-                           create_warning_box, create_info_label)
+                           create_card_subtitle, create_combo,
+                           create_stat_value, create_warning_box,
+                           create_info_label)
 
 
 MM2_PER_IN2 = 645.16
@@ -61,9 +62,8 @@ class ShearTab(QWidget):
         v.addWidget(sub)
 
         v.addWidget(create_step_title("芯片尺寸"))
-        self.cbo_shape = QComboBox()
-        self.cbo_shape.addItems(["矩形（输入长、宽）", "圆形（输入直径）",
-                                 "已知面积（直接输入）"])
+        self.cbo_shape = create_combo(["矩形（输入长、宽）", "圆形（输入直径）",
+                                       "已知面积（直接输入）"])
         self.cbo_shape.currentIndexChanged.connect(self._on_shape_changed)
         v.addWidget(self.cbo_shape)
 

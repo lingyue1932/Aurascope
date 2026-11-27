@@ -348,7 +348,6 @@ QComboBox::drop-down {{
     background: {c['surface2']};
     border-top-right-radius: 8px; border-bottom-right-radius: 8px;
 }}
-QComboBox::down-arrow {{ image: none; width: 0; height: 0; }}
 QComboBox QAbstractItemView {{
     background: {c['surface']};
     border: 1px solid {c['border']};
@@ -562,7 +561,7 @@ POPUP_QSS = (
     "    border: none;"
     "    outline: none;"
     "}"
-    "QListView:focus { outline: none; border: 1px solid #2563EB; }"
+    "QListView:focus { outline: none; }"
     "QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }"
     "QScrollBar::handle:vertical {"
     f"    background: {_C['border2']}; border-radius: 4px; min-height: 20px;"

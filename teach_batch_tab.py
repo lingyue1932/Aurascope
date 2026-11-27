@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (QDialog,QWidget, QVBoxLayout, QHBoxLayout, QFileDia
                              QFrame, QScrollArea, QLabel, QTableWidget,
                              QTableWidgetItem, QHeaderView, QInputDialog,
                              QMessageBox, QSizePolicy,
-                             QProgressBar, QProgressDialog, QComboBox,
+                             QProgressBar, QProgressDialog,
                              QListWidget, QListWidgetItem, QAbstractItemView, QGridLayout,
                              QSpinBox, QSplitter, QStackedWidget, QToolButton,
                              QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
@@ -46,7 +46,7 @@ from ui_components import (NumericItem, align_right, attach_empty_hint,
                            create_danger_button, create_nav_button,
                            create_success_label, create_success_value,
                            create_step_title, create_info_label,
-                           create_checkbox, enable_click_sort,
+                           create_checkbox, create_combo, enable_click_sort,
                            CollapsibleSection)
 from ui_dialogs import show_info, show_toast, show_warning
 
@@ -457,7 +457,7 @@ class TeachBatchTab(QWidget):
         v.setSpacing(14)
         v.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.combo_recipe = QComboBox()
+        self.combo_recipe = create_combo()
         self.combo_recipe.setMinimumWidth(120)
         self.combo_recipe.setToolTip("已保存的示教配方")
         v.addWidget(self.combo_recipe)
@@ -663,7 +663,7 @@ class TeachBatchTab(QWidget):
             "在窗口内预览金锡拼接图（黑底，空洞红色填充）\n"
             "支持缩放查看，也可另存为 PNG")
         exp.addWidget(self.btn_view_strip)
-        self.combo_sheet = QComboBox()
+        self.combo_sheet = create_combo()
         self.combo_sheet.addItem("排版：纵向堆叠", "vertical")
         self.combo_sheet.addItem("排版：横向一行", "horizontal")
         self.combo_sheet.addItem("排版：网格 2 列", "grid2")

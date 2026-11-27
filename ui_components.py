@@ -3,7 +3,8 @@
 import os
 
 from PyQt6.QtWidgets import (QPushButton, QLabel, QSlider, QGroupBox,
-                             QCheckBox, QFrame, QMessageBox, QTableWidgetItem,
+                             QCheckBox, QComboBox, QFrame, QMessageBox,
+                             QTableWidgetItem,
                              QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget)
 from PyQt6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
@@ -416,6 +417,41 @@ def copy_bgr_to_clipboard(img, silent=True):
         return False, f'{type(e).__name__}: {e}'
 
 
+class ChevronComboBox(QComboBox):
+    """带自绘箭头的下拉框。
+
+    QSS 里 `::drop-down` 一旦被样式覆盖，Qt 就不画原生箭头；
+    而 CSS 三角又不支持 → 端盖会变成一块空白。这里在 paintEvent 里
+    补一个小 chevron，颜色取 text2，禁用时取 text3。
+    """
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        from styles import _C
+        color = QColor(_C['text3'] if not self.isEnabled() else _C['text2'])
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(color)
+        pen.setWidthF(1.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        cx = self.width() - 11.0      # 端盖宽 22px 的中心
+        cy = self.height() / 2.0
+        painter.drawPolyline([QPointF(cx - 4.0, cy - 2.0),
+                              QPointF(cx, cy + 2.2),
+                              QPointF(cx + 4.0, cy - 2.0)])
+        painter.end()
+
+
+def create_combo(items=None, parent=None):
+    """下拉框工厂：统一使用带箭头自绘的实现。"""
+    combo = ChevronComboBox(parent)
+    if items:
+        combo.addItems(list(items))
+    return combo
+
+
 def style_combo_popups(widget):
     """把下拉弹层的样式直接套到每个 QComboBox 的视图上
 
@@ -446,8 +482,13 @@ def style_combo_popups(widget):
             cb.view().setStyleSheet(POPUP_QSS)
             n = cb.count()
             if n:
-                # 弹层高度按项数兜底 ✗ 否则 QSS 改了行高但 sizeHint 没变 → 裁切 ✗
-                cb.view().setMinimumHeight(min(n, 12) * 27 + 10)
+                # 高度必须与内容严格相等：多出几个像素 Qt 就判定“内容溢出”，
+                # 会在弹层底部额外画一条 QComboBoxPrivateScroller（灰条 + 小箭头）
+                row = cb.view().sizeHintForRow(0)
+                if row and row > 0:
+                    cb.view().setFixedHeight(min(n, 12) * row + 2)
+                else:
+                    cb.view().setMinimumHeight(min(n, 12) * 27 + 10)
         except Exception:
             pass
     return len(combos)
