@@ -443,14 +443,6 @@ class ChevronComboBox(QComboBox):
                               QPointF(cx + 4.0, cy - 2.0)])
         painter.end()
 
-    def showPopup(self):
-        super().showPopup()
-        # 弹层容器 QComboBoxPrivateContainer 自带 QFrame::StyledPanel 原生边框（Windows 下是灰方框），
-        # 会套在我们圆角弹层外面；grab() 抓不到它，但用户一眼就能看到。
-        container = self.view().parentWidget()
-        if container is not None and hasattr(container, 'setFrameShape'):
-            container.setFrameShape(QFrame.Shape.NoFrame)
-
 
 def create_combo(items=None, parent=None):
     """下拉框工厂：统一使用带箭头自绘的实现。"""
@@ -488,6 +480,17 @@ def style_combo_popups(widget):
         try:
             cb.setItemDelegate(_NoFocusDelegate(cb))
             cb.view().setStyleSheet(POPUP_QSS)
+            # 弹层是独立顶层窗口（QFrame + Qt::Popup），Windows 会给它画一层原生方角
+            # 边框+阴影，导致圆角弹层外面套一个方框。社区标准做法：在窗口创建前
+            # 把它改成无边框+透明（只能在这里做，显示后再改 flags 会把窗口重建、位置错乱）。
+            container = cb.view().parentWidget()
+            if container is not None and hasattr(container, 'setWindowFlags'):
+                container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+                container.setWindowFlags(
+                    container.windowFlags()
+                    | Qt.WindowType.FramelessWindowHint
+                    | Qt.WindowType.NoDropShadowWindowHint)
+                container.setStyleSheet('background: transparent; border: none;')
             n = cb.count()
             if n:
                 # 高度 = 内容 + 弹层自身 chrome（POPUP_QSS 的 padding 2px×2 + 边框 1px×2）
