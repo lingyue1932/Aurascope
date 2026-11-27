@@ -94,6 +94,24 @@ ROI Tab 在 main_window.py 注册为 `'    ROI    '`，实现分布在四个文�
 - 复选框用 `create_checkbox`，勾选态是主色实心指示块（不做图片对勾），保持现有观感。
 - 所有交互控件必须写全 default / hover / pressed / checked / disabled / focus 状态。
 
+### 下拉框 / 弹层
+
+这一节是踩过坑换来的，改动前先读完，不要重新发明：
+
+- 一律用 `create_combo()`（`ChevronComboBox`），不要直接 `QComboBox()`。
+- **箭头**：QSS 一旦定义 `::drop-down`，Qt 就不再画原生箭头，所以箭头由 `paintEvent` 自绘 chevron（颜色 text2，禁用 text3）。
+  禁止再写 `QComboBox::down-arrow { image: none; ... }`——会把箭头抹成一块空白（曾经的错误做法）。
+- **弹层是独立顶层窗口**（`QComboBoxPrivateContainer`，`QFrame + Qt::Popup`），Windows 会额外画一层方角边框 + 阴影。
+  必须在**窗口创建前**（启动时 `style_combo_popups()`）设置 `WA_TranslucentBackground` +
+  `FramelessWindowHint` + `NoDropShadowWindowHint`，并把容器背景设成 `transparent`。
+  弹层显示后再改 flags 会重建窗口 → 弹层消失或错位（已实测）。
+- **弹层高度**必须等于 `行数 × sizeHintForRow(0) + 6`（QSS 的 padding 2×2 + 边框 1×2）。
+  少算会被判成内容溢出，Qt 会在底部画 `QComboBoxPrivateScroller`（一条灰条 + 居中 ▼）。
+  只有选项超过 12 条才允许滚动。
+- 弹层圆角 8px、选项高亮圆角 6px；不要再给弹层套第二层自绘边框（会出现“方框套圆角卡片”）。
+- **验证方法**：`widget.grab()` 抓不到窗口级边框/阴影，必须用
+  `QGuiApplication.primaryScreen().grabWindow(0, x, y, w, h)` 截真实屏幕才能看到用户所见。
+
 ## 画布视觉语言
 
 所有线宽写成 `x / self.scale`，保证缩放时屏幕粗细恒定。配色表：
