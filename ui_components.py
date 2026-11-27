@@ -482,11 +482,12 @@ def style_combo_popups(widget):
             cb.view().setStyleSheet(POPUP_QSS)
             n = cb.count()
             if n:
-                # 高度必须与内容严格相等：多出几个像素 Qt 就判定“内容溢出”，
-                # 会在弹层底部额外画一条 QComboBoxPrivateScroller（灰条 + 小箭头）
+                # 高度 = 内容 + 弹层自身 chrome（POPUP_QSS 的 padding 2px×2 + 边框 1px×2）
+                # 少算这几个像素 → 视口比内容矮 → Qt 认为要滚动，
+                # 弹层底部就会多出一条 QComboBoxPrivateScroller（灰条 + 小箭头）
                 row = cb.view().sizeHintForRow(0)
                 if row and row > 0:
-                    cb.view().setFixedHeight(min(n, 12) * row + 2)
+                    cb.view().setFixedHeight(min(n, 12) * row + 6)
                 else:
                     cb.view().setMinimumHeight(min(n, 12) * 27 + 10)
         except Exception:
