@@ -443,6 +443,14 @@ class ChevronComboBox(QComboBox):
                               QPointF(cx + 4.0, cy - 2.0)])
         painter.end()
 
+    def showPopup(self):
+        super().showPopup()
+        # 弹层容器 QComboBoxPrivateContainer 自带 QFrame::StyledPanel 原生边框（Windows 下是灰方框），
+        # 会套在我们圆角弹层外面；grab() 抓不到它，但用户一眼就能看到。
+        container = self.view().parentWidget()
+        if container is not None and hasattr(container, 'setFrameShape'):
+            container.setFrameShape(QFrame.Shape.NoFrame)
+
 
 def create_combo(items=None, parent=None):
     """下拉框工厂：统一使用带箭头自绘的实现。"""
