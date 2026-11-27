@@ -156,6 +156,11 @@ ROI Tab 在 main_window.py 注册为 `'    ROI    '`，实现分布在四个文�
 5. `QSplitter` 手柄默认透明，只 hover 显示 border、pressed 显示 accent。
 6. 表格/数值用等宽字体，正文用 UI 字体；不要出现第三种字体。
 7. 不要新增灰阶或字号档位；禁用/占位底色已定义，不要另造。
+8. **无边框窗口要能拖边缩放，三步缺一不可**（`main_window.py`）：
+   ① 窗口标志带 `WindowMinMaxButtonsHint`；② 窗口创建后补回 `WS_THICKFRAME | WS_CAPTION`（`SetWindowLong` + `SWP_FRAMECHANGED`）；
+   ③ `nativeEvent` 里接管 `WM_NCCALCSIZE` 让客户区铺满窗口（最大化时按边框厚度回缩）。
+   只有 `WM_NCHITTEST` 返回 HT 码时，WS_POPUP 窗口不会进入系统 sizing 循环，拖边无效。
+   不要用 `ExpandedClientAreaHint`：Qt 6.11 在 Windows 上会连原生标题栏一起画出来（实测双标题栏）。
 
 ## 修改流程与验收
 
